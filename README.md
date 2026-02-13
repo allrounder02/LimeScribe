@@ -121,7 +121,7 @@ The app starts in the tray and opens the main window.
 - Click **Transcribe** to process and display text.
 
 ### Text to Speech tab
-- Enter text directly, or click **Use Transcription Output**.
+- Enter text directly (field is editable), or click **Use Transcription Output**.
 - Click **Generate & Play** to synthesize and play audio.
 - Click **Save Last Audio** to export the generated WAV file.
 
@@ -138,14 +138,22 @@ The app starts in the tray and opens the main window.
 ### Output area controls
 - **Copy to Clipboard** copies the current output text.
 - **Clear Output** clears all transcription text.
+- **Edit Output** focuses the transcription field for one-click text editing.
 - In listening mode, each recognized chunk is appended to output so you can copy full running text.
+- The transcription output field is editable so you can adjust wording before copying or using TTS.
 
 ### Settings tab
 - View and edit global keyboard shortcuts for:
   - Toggle Listening
   - Toggle Recording
+- View and edit TTS runtime settings:
+  - Model
+  - Voice
+  - Language
+  - Response format
+  - Speed
 - Save changes without restarting the app
-- Restore default shortcuts
+- Restore hotkey and TTS defaults
 
 ## Optional CLI Smoke Test
 

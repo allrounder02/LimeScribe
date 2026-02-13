@@ -40,6 +40,11 @@ _SETTINGS_PATH = Path(__file__).with_name("settings.json")
 DEFAULT_SETTINGS = {
     "hotkey_listen": DEFAULT_HOTKEY_LISTEN,
     "hotkey_record": DEFAULT_HOTKEY_RECORD,
+    "tts_model": LEMONFOX_TTS_MODEL,
+    "tts_voice": LEMONFOX_TTS_VOICE,
+    "tts_language": LEMONFOX_TTS_LANGUAGE,
+    "tts_response_format": LEMONFOX_TTS_RESPONSE_FORMAT,
+    "tts_speed": str(LEMONFOX_TTS_SPEED),
 }
 
 
@@ -60,7 +65,7 @@ def load_app_settings() -> dict:
 
 
 def save_app_settings(settings: dict):
-    payload = DEFAULT_SETTINGS.copy()
+    payload = load_app_settings()
     for key in DEFAULT_SETTINGS:
         value = settings.get(key)
         if isinstance(value, str) and value.strip():

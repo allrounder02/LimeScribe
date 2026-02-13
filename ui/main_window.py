@@ -1,6 +1,6 @@
 from PyQt6.QtWidgets import (
     QMainWindow, QWidget, QTabWidget, QVBoxLayout, QHBoxLayout,
-    QPushButton, QTextEdit, QLabel, QFileDialog, QLineEdit, QMessageBox, QApplication,
+    QPushButton, QTextEdit, QLabel, QFileDialog, QLineEdit, QMessageBox, QApplication, QComboBox,
     QSystemTrayIcon,
 )
 from PyQt6.QtCore import Qt, QThread, pyqtSignal
@@ -13,8 +13,20 @@ from core.vad_listener import VADListener
 from core.text_output import copy_to_clipboard
 from core.tts_audio_output import play_wav_bytes
 from hotkeys import DEFAULT_HOTKEY_LISTEN, DEFAULT_HOTKEY_RECORD
+from config import (
+    LEMONFOX_TTS_MODEL,
+    LEMONFOX_TTS_VOICE,
+    LEMONFOX_TTS_LANGUAGE,
+    LEMONFOX_TTS_RESPONSE_FORMAT,
+    LEMONFOX_TTS_SPEED,
+)
 
 logger = logging.getLogger(__name__)
+
+TTS_MODEL_PRESETS = ["tts-1", "tts-1-hd"]
+TTS_VOICE_PRESETS = ["heart", "alloy", "ash", "ballad", "coral", "echo", "sage", "shimmer", "verse"]
+TTS_LANGUAGE_PRESETS = ["en-us", "en-gb", "de-de", "fr-fr", "es-es", "it-it"]
+TTS_RESPONSE_FORMAT_PRESETS = ["wav", "mp3", "ogg", "flac"]
 
 
 class TranscribeWorker(QThread):
@@ -80,6 +92,7 @@ class MainWindow(QMainWindow):
         self._listen_workers = []  # keep refs so they don't get GC'd
         self.hotkeys = None
         self._on_hotkeys_changed = None
+        self._on_tts_settings_changed = None
 
         central = QWidget()
         self.setCentralWidget(central)
@@ -99,19 +112,23 @@ class MainWindow(QMainWindow):
         layout.addWidget(self.output_label)
 
         self.text_output = QTextEdit()
-        self.text_output.setReadOnly(True)
+        self.text_output.setReadOnly(False)
+        self.text_output.setPlaceholderText("Transcription output appears here. You can edit it directly.")
         layout.addWidget(self.text_output)
 
         # Output actions
         btn_row = QHBoxLayout()
         self.btn_minimize_tray = QPushButton("Minimize to Tray")
         self.btn_minimize_tray.clicked.connect(self._minimize_to_tray)
+        self.btn_edit_output = QPushButton("Edit Output")
+        self.btn_edit_output.clicked.connect(self._focus_output_for_edit)
         self.btn_clear = QPushButton("Clear Output")
         self.btn_clear.clicked.connect(self._clear_output)
         self.btn_copy = QPushButton("Copy to Clipboard")
         self.btn_copy.clicked.connect(self._copy_output)
         btn_row.addStretch()
         btn_row.addWidget(self.btn_minimize_tray)
+        btn_row.addWidget(self.btn_edit_output)
         btn_row.addWidget(self.btn_clear)
         btn_row.addWidget(self.btn_copy)
         layout.addLayout(btn_row)
@@ -131,6 +148,19 @@ class MainWindow(QMainWindow):
         listen_hotkey, record_hotkey = self.hotkeys.get_hotkeys()
         self.input_listen_hotkey.setText(listen_hotkey)
         self.input_record_hotkey.setText(record_hotkey)
+
+    def attach_tts_settings(self, settings: dict, on_tts_settings_changed=None):
+        """Attach persisted TTS settings and apply to client/live UI."""
+        self._on_tts_settings_changed = on_tts_settings_changed
+        self._set_combo_value(self.input_tts_model, settings.get("tts_model", self.tts_client.model))
+        self._set_combo_value(self.input_tts_voice, settings.get("tts_voice", self.tts_client.voice))
+        self._set_combo_value(self.input_tts_language, settings.get("tts_language", self.tts_client.language))
+        self._set_combo_value(
+            self.input_tts_response_format,
+            settings.get("tts_response_format", self.tts_client.response_format),
+        )
+        self.input_tts_speed.setText(str(settings.get("tts_speed", self.tts_client.speed)))
+        self._save_tts_settings_ui(show_status=False)
 
     # ── Listening tab ──────────────────────────────────────────────
     def _build_listening_tab(self):
@@ -341,6 +371,61 @@ class MainWindow(QMainWindow):
         btn_row.addWidget(self.btn_hotkeys_defaults)
         layout.addLayout(btn_row)
 
+        layout.addWidget(QLabel(""))
+        layout.addWidget(QLabel("Text-to-Speech"))
+        layout.addWidget(QLabel("Supported fields: model, voice, language, response format, speed"))
+
+        tts_model_row = QHBoxLayout()
+        tts_model_row.addWidget(QLabel("Model:"))
+        self.input_tts_model = QComboBox()
+        self.input_tts_model.setEditable(True)
+        self.input_tts_model.addItems(TTS_MODEL_PRESETS)
+        self.input_tts_model.setCurrentText(LEMONFOX_TTS_MODEL)
+        tts_model_row.addWidget(self.input_tts_model)
+        layout.addLayout(tts_model_row)
+
+        tts_voice_row = QHBoxLayout()
+        tts_voice_row.addWidget(QLabel("Voice:"))
+        self.input_tts_voice = QComboBox()
+        self.input_tts_voice.setEditable(True)
+        self.input_tts_voice.addItems(TTS_VOICE_PRESETS)
+        self.input_tts_voice.setCurrentText(LEMONFOX_TTS_VOICE)
+        tts_voice_row.addWidget(self.input_tts_voice)
+        layout.addLayout(tts_voice_row)
+
+        tts_lang_row = QHBoxLayout()
+        tts_lang_row.addWidget(QLabel("Language:"))
+        self.input_tts_language = QComboBox()
+        self.input_tts_language.setEditable(True)
+        self.input_tts_language.addItems(TTS_LANGUAGE_PRESETS)
+        self.input_tts_language.setCurrentText(LEMONFOX_TTS_LANGUAGE)
+        tts_lang_row.addWidget(self.input_tts_language)
+        layout.addLayout(tts_lang_row)
+
+        tts_fmt_row = QHBoxLayout()
+        tts_fmt_row.addWidget(QLabel("Response Format:"))
+        self.input_tts_response_format = QComboBox()
+        self.input_tts_response_format.setEditable(True)
+        self.input_tts_response_format.addItems(TTS_RESPONSE_FORMAT_PRESETS)
+        self.input_tts_response_format.setCurrentText(LEMONFOX_TTS_RESPONSE_FORMAT)
+        tts_fmt_row.addWidget(self.input_tts_response_format)
+        layout.addLayout(tts_fmt_row)
+
+        tts_speed_row = QHBoxLayout()
+        tts_speed_row.addWidget(QLabel("Speed:"))
+        self.input_tts_speed = QLineEdit(str(LEMONFOX_TTS_SPEED))
+        tts_speed_row.addWidget(self.input_tts_speed)
+        layout.addLayout(tts_speed_row)
+
+        tts_btn_row = QHBoxLayout()
+        self.btn_tts_settings_save = QPushButton("Save TTS Settings")
+        self.btn_tts_settings_defaults = QPushButton("Restore TTS Defaults")
+        self.btn_tts_settings_save.clicked.connect(self._save_tts_settings_ui)
+        self.btn_tts_settings_defaults.clicked.connect(self._restore_default_tts_settings)
+        tts_btn_row.addWidget(self.btn_tts_settings_save)
+        tts_btn_row.addWidget(self.btn_tts_settings_defaults)
+        layout.addLayout(tts_btn_row)
+
         layout.addStretch()
         return tab
 
@@ -368,6 +453,62 @@ class MainWindow(QMainWindow):
         self.input_record_hotkey.setText(DEFAULT_HOTKEY_RECORD)
         self._save_hotkeys()
 
+    def _collect_tts_settings_from_ui(self) -> dict:
+        model = self.input_tts_model.currentText().strip()
+        voice = self.input_tts_voice.currentText().strip()
+        language = self.input_tts_language.currentText().strip()
+        response_format = self.input_tts_response_format.currentText().strip().lower()
+        speed_raw = self.input_tts_speed.text().strip()
+
+        if not model or not voice or not language or not response_format:
+            raise ValueError("Model, voice, language, and response format are required.")
+        speed = float(speed_raw)
+        if speed <= 0:
+            raise ValueError("Speed must be greater than 0.")
+
+        return {
+            "tts_model": model,
+            "tts_voice": voice,
+            "tts_language": language,
+            "tts_response_format": response_format,
+            "tts_speed": str(speed),
+        }
+
+    def _apply_tts_settings_to_client(self, settings: dict):
+        self.tts_client.model = settings["tts_model"]
+        self.tts_client.voice = settings["tts_voice"]
+        self.tts_client.language = settings["tts_language"]
+        self.tts_client.response_format = settings["tts_response_format"]
+        self.tts_client.speed = float(settings["tts_speed"])
+
+    def _save_tts_settings_ui(self, show_status=True):
+        try:
+            settings = self._collect_tts_settings_from_ui()
+            self._apply_tts_settings_to_client(settings)
+            if self._on_tts_settings_changed:
+                self._on_tts_settings_changed(settings)
+            if show_status:
+                self.statusBar().showMessage("TTS settings updated")
+        except Exception as e:
+            if show_status:
+                QMessageBox.warning(self, "TTS Settings Error", str(e))
+            if show_status:
+                self.statusBar().showMessage("TTS settings update failed")
+
+    def _restore_default_tts_settings(self):
+        self._set_combo_value(self.input_tts_model, LEMONFOX_TTS_MODEL)
+        self._set_combo_value(self.input_tts_voice, LEMONFOX_TTS_VOICE)
+        self._set_combo_value(self.input_tts_language, LEMONFOX_TTS_LANGUAGE)
+        self._set_combo_value(self.input_tts_response_format, LEMONFOX_TTS_RESPONSE_FORMAT)
+        self.input_tts_speed.setText(str(LEMONFOX_TTS_SPEED))
+        self._save_tts_settings_ui()
+
+    @staticmethod
+    def _set_combo_value(combo: QComboBox, value: str):
+        if value is None:
+            value = ""
+        combo.setCurrentText(str(value))
+
     # ── Shared transcription logic ─────────────────────────────────
     def _run_transcription(self, audio_bytes=None, file_path=None):
         self._worker = TranscribeWorker(self.client, audio_bytes=audio_bytes, file_path=file_path)
@@ -394,6 +535,13 @@ class MainWindow(QMainWindow):
     def _clear_output(self):
         self.text_output.clear()
         self.statusBar().showMessage("Output cleared")
+
+    def _focus_output_for_edit(self):
+        self.text_output.setFocus()
+        cursor = self.text_output.textCursor()
+        cursor.movePosition(cursor.MoveOperation.End)
+        self.text_output.setTextCursor(cursor)
+        self.statusBar().showMessage("Output ready for editing")
 
     def _append_output_text(self, text: str):
         text = (text or "").strip()

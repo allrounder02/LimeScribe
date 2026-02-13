@@ -63,6 +63,10 @@ def main():
         hotkeys,
         on_hotkeys_changed=lambda listen, record: _save_hotkey_settings(listen, record),
     )
+    window.attach_tts_settings(
+        settings,
+        on_tts_settings_changed=lambda tts_settings: _save_tts_settings(tts_settings),
+    )
     hotkeys.start()
 
     tray.show()
@@ -105,6 +109,10 @@ def _save_hotkey_settings(listen_hotkey: str, record_hotkey: str):
             "hotkey_record": record_hotkey,
         }
     )
+
+
+def _save_tts_settings(tts_settings: dict):
+    save_app_settings(tts_settings)
 
 
 if __name__ == "__main__":
