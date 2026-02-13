@@ -1,12 +1,11 @@
 import io
 import wave
 import threading
-import collections
 import numpy as np
 import sounddevice as sd
 import webrtcvad
 
-from config import VAD_PAUSE_THRESHOLD
+from config import VAD_PAUSE_THRESHOLD, VAD_AGGRESSIVENESS, VAD_MIN_SPEECH_SECONDS
 
 
 SAMPLE_RATE = 16000  # webrtcvad requires 8000, 16000, or 32000
@@ -22,17 +21,28 @@ class VADListener:
     is detected, emits the buffered speech as WAV bytes via the callback.
     """
 
-    def __init__(self, on_speech_chunk, pause_threshold=None, vad_aggressiveness=2):
+    def __init__(
+        self,
+        on_speech_chunk,
+        pause_threshold=None,
+        vad_aggressiveness=None,
+        min_speech_seconds=None,
+    ):
         """
         Args:
             on_speech_chunk: callable(wav_bytes: bytes) — called from a background
                 thread when a speech chunk is ready for transcription.
             pause_threshold: seconds of silence after speech to trigger a chunk.
             vad_aggressiveness: 0-3 (0 = least aggressive, 3 = most aggressive filtering).
+            min_speech_seconds: minimum detected voiced duration required before emit.
         """
         self.on_speech_chunk = on_speech_chunk
         self.pause_threshold = pause_threshold or VAD_PAUSE_THRESHOLD
-        self.vad = webrtcvad.Vad(vad_aggressiveness)
+        vad_level = VAD_AGGRESSIVENESS if vad_aggressiveness is None else vad_aggressiveness
+        min_seconds = VAD_MIN_SPEECH_SECONDS if min_speech_seconds is None else min_speech_seconds
+        vad_level = max(0, min(3, int(vad_level)))
+        min_seconds = max(0.0, float(min_seconds))
+        self.vad = webrtcvad.Vad(vad_level)
 
         self._stream = None
         self._running = False
@@ -40,6 +50,7 @@ class VADListener:
 
         # Ring buffer for VAD frames
         self._frames_per_pause = int(self.pause_threshold * 1000 / FRAME_DURATION_MS)
+        self._min_speech_frames = max(1, int(min_seconds * 1000 / FRAME_DURATION_MS))
 
     def start(self):
         """Start listening on the default mic."""
@@ -58,6 +69,7 @@ class VADListener:
 
     def _listen_loop(self):
         speech_frames = []
+        speech_frame_count = 0
         silent_frame_count = 0
         in_speech = False
 
@@ -80,6 +92,7 @@ class VADListener:
                 if is_speech:
                     in_speech = True
                     silent_frame_count = 0
+                    speech_frame_count += 1
                     speech_frames.append(data.copy())
                 elif in_speech:
                     # Still buffering during short silence within speech
@@ -88,8 +101,9 @@ class VADListener:
 
                     if silent_frame_count >= self._frames_per_pause:
                         # Pause detected — emit the chunk
-                        wav_bytes = self._to_wav(speech_frames)
+                        wav_bytes = self._to_wav(speech_frames) if speech_frame_count >= self._min_speech_frames else b""
                         speech_frames.clear()
+                        speech_frame_count = 0
                         in_speech = False
                         silent_frame_count = 0
                         if wav_bytes:
@@ -100,7 +114,7 @@ class VADListener:
 
             # Flush any remaining speech
             if speech_frames:
-                wav_bytes = self._to_wav(speech_frames)
+                wav_bytes = self._to_wav(speech_frames) if speech_frame_count >= self._min_speech_frames else b""
                 if wav_bytes:
                     self.on_speech_chunk(wav_bytes)
 

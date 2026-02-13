@@ -19,6 +19,7 @@ The app runs with a system tray icon, global hotkeys, and auto-copies transcript
 - Global hotkeys:
   - `Ctrl+Alt+L` toggle listening
   - `Ctrl+Alt+R` toggle recording
+  - Both are configurable in the **Settings** tab
 - Voice Activity Detection (`webrtcvad`) for pause-based chunking
 - LemonFox API integration for both recorded audio bytes and local files
 - Clipboard output (`pyperclip`) and optional paste helpers (`pyautogui`)
@@ -59,6 +60,10 @@ LEMONFOX_API_KEY=your_api_key_here
 LEMONFOX_LANGUAGE=english
 LEMONFOX_RESPONSE_FORMAT=json
 VAD_PAUSE_THRESHOLD=1.5
+VAD_AGGRESSIVENESS=3
+VAD_MIN_SPEECH_SECONDS=0.5
+LEMONFOX_API_URL=https://api.lemonfox.ai/v1/audio/transcriptions
+LEMONFOX_API_FALLBACK_URL=https://transcribe.whisperapi.com
 ```
 
 Environment variables:
@@ -66,6 +71,10 @@ Environment variables:
 - `LEMONFOX_LANGUAGE`: transcription language (default `english`)
 - `LEMONFOX_RESPONSE_FORMAT`: API response format (default `json`)
 - `VAD_PAUSE_THRESHOLD`: seconds of silence before chunk submission in Listening mode
+- `VAD_AGGRESSIVENESS`: VAD strictness `0-3` (higher is stricter, default `3`)
+- `VAD_MIN_SPEECH_SECONDS`: minimum voiced speech before sending a chunk (default `0.5`)
+- `LEMONFOX_API_URL`: primary transcription endpoint
+- `LEMONFOX_API_FALLBACK_URL`: fallback endpoint if primary is unreachable
 
 ## Run
 
@@ -97,6 +106,17 @@ The app starts in the tray and opens the main window.
 - Start Listening
 - Start Recording
 - Quit
+
+### Window behavior
+- Click window `X` to fully quit the app (terminal process ends).
+- Use **Minimize to Tray** to keep the app running in the background tray.
+
+### Settings tab
+- View and edit global keyboard shortcuts for:
+  - Toggle Listening
+  - Toggle Recording
+- Save changes without restarting the app
+- Restore default shortcuts
 
 ## Optional CLI Smoke Test
 
@@ -131,6 +151,10 @@ ui/
 - No mic input: verify Windows microphone permissions and default input device.
 - Hotkeys not firing: run app in native Windows desktop session (not headless/WSL GUI).
 - Clipboard/paste issues: ensure focused target app accepts `Ctrl+V`.
+- Repeated idle text (for example repeated "Thank you"):
+  - Set `VAD_AGGRESSIVENESS=3` in `.env`.
+  - Set `VAD_MIN_SPEECH_SECONDS=0.5` in `.env`.
+  - If it still happens, increase `VAD_MIN_SPEECH_SECONDS` to `0.7`.
 
 ## Security
 

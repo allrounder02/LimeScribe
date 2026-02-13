@@ -1,6 +1,7 @@
 from PyQt6.QtWidgets import (
     QMainWindow, QWidget, QTabWidget, QVBoxLayout, QHBoxLayout,
-    QPushButton, QTextEdit, QLabel, QFileDialog,
+    QPushButton, QTextEdit, QLabel, QFileDialog, QLineEdit, QMessageBox, QApplication,
+    QSystemTrayIcon,
 )
 from PyQt6.QtCore import Qt, QThread, pyqtSignal
 
@@ -8,6 +9,7 @@ from core.lemonfox_client import LemonFoxClient
 from core.audio_recorder import AudioRecorder
 from core.vad_listener import VADListener
 from core.text_output import copy_to_clipboard, paste_to_active_window
+from hotkeys import DEFAULT_HOTKEY_LISTEN, DEFAULT_HOTKEY_RECORD
 
 
 class TranscribeWorker(QThread):
@@ -49,6 +51,8 @@ class MainWindow(QMainWindow):
         self._worker = None
         self._vad = None
         self._listen_workers = []  # keep refs so they don't get GC'd
+        self.hotkeys = None
+        self._on_hotkeys_changed = None
 
         central = QWidget()
         self.setCentralWidget(central)
@@ -59,6 +63,7 @@ class MainWindow(QMainWindow):
         self.tabs.addTab(self._build_listening_tab(), "Listening")
         self.tabs.addTab(self._build_recording_tab(), "Recording")
         self.tabs.addTab(self._build_file_tab(), "File")
+        self.tabs.addTab(self._build_settings_tab(), "Settings")
         layout.addWidget(self.tabs)
 
         # Shared output area
@@ -69,16 +74,35 @@ class MainWindow(QMainWindow):
         self.text_output.setReadOnly(True)
         layout.addWidget(self.text_output)
 
-        # Copy button
+        # Output actions
         btn_row = QHBoxLayout()
+        self.btn_minimize_tray = QPushButton("Minimize to Tray")
+        self.btn_minimize_tray.clicked.connect(self._minimize_to_tray)
+        self.btn_clear = QPushButton("Clear Output")
+        self.btn_clear.clicked.connect(self._clear_output)
         self.btn_copy = QPushButton("Copy to Clipboard")
         self.btn_copy.clicked.connect(self._copy_output)
         btn_row.addStretch()
+        btn_row.addWidget(self.btn_minimize_tray)
+        btn_row.addWidget(self.btn_clear)
         btn_row.addWidget(self.btn_copy)
         layout.addLayout(btn_row)
 
         # Status bar
         self.statusBar().showMessage("Ready")
+
+    def attach_tray(self, tray):
+        """Attach tray and sync UI/menu labels to current state."""
+        self.tray = tray
+        self._sync_listening_ui(self.btn_listen_toggle.isChecked())
+
+    def attach_hotkey_manager(self, hotkeys, on_hotkeys_changed=None):
+        """Attach global hotkey manager so settings tab can edit bindings."""
+        self.hotkeys = hotkeys
+        self._on_hotkeys_changed = on_hotkeys_changed
+        listen_hotkey, record_hotkey = self.hotkeys.get_hotkeys()
+        self.input_listen_hotkey.setText(listen_hotkey)
+        self.input_record_hotkey.setText(record_hotkey)
 
     # ── Listening tab ──────────────────────────────────────────────
     def _build_listening_tab(self):
@@ -93,26 +117,36 @@ class MainWindow(QMainWindow):
 
     def _toggle_listening(self, checked):
         if checked:
-            self.btn_listen_toggle.setText("Stop Listening")
-            self.statusBar().showMessage("Listening (VAD)...")
             self._start_listening()
         else:
-            self.btn_listen_toggle.setText("Start Listening")
-            self.statusBar().showMessage("Ready")
             self._stop_listening()
 
     def _start_listening(self):
-        if self.tray:
-            self.tray.set_state("listening")
+        if self._vad:
+            return
+        self._sync_listening_ui(True)
         self._vad = VADListener(on_speech_chunk=self._on_vad_chunk)
         self._vad.start()
 
     def _stop_listening(self):
+        if not self._vad:
+            self._sync_listening_ui(False)
+            return
         if self._vad:
             self._vad.stop()
             self._vad = None
+        self._sync_listening_ui(False)
+
+    def _sync_listening_ui(self, listening: bool):
+        """Keep button text/check state and tray menu/icon in sync."""
+        self.btn_listen_toggle.blockSignals(True)
+        self.btn_listen_toggle.setChecked(listening)
+        self.btn_listen_toggle.blockSignals(False)
+        self.btn_listen_toggle.setText("Stop Listening" if listening else "Start Listening")
+        self.statusBar().showMessage("Listening (VAD)..." if listening else "Ready")
         if self.tray:
-            self.tray.set_state("idle")
+            self.tray.set_state("listening" if listening else "idle")
+            self.tray.action_listen.setText("Stop Listening" if listening else "Start Listening")
 
     def _on_vad_chunk(self, wav_bytes: bytes):
         """Called from VAD background thread when a speech chunk is ready."""
@@ -227,6 +261,62 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage("Transcribing file...")
         self._run_transcription(file_path=self._selected_file)
 
+    # ── Settings tab ───────────────────────────────────────────────
+    def _build_settings_tab(self):
+        tab = QWidget()
+        layout = QVBoxLayout(tab)
+
+        layout.addWidget(QLabel("Global Hotkeys"))
+        layout.addWidget(QLabel("Format example: Ctrl+Alt+L"))
+
+        listen_row = QHBoxLayout()
+        listen_row.addWidget(QLabel("Toggle Listening:"))
+        self.input_listen_hotkey = QLineEdit(DEFAULT_HOTKEY_LISTEN)
+        listen_row.addWidget(self.input_listen_hotkey)
+        layout.addLayout(listen_row)
+
+        record_row = QHBoxLayout()
+        record_row.addWidget(QLabel("Toggle Recording:"))
+        self.input_record_hotkey = QLineEdit(DEFAULT_HOTKEY_RECORD)
+        record_row.addWidget(self.input_record_hotkey)
+        layout.addLayout(record_row)
+
+        btn_row = QHBoxLayout()
+        self.btn_hotkeys_save = QPushButton("Save Hotkeys")
+        self.btn_hotkeys_defaults = QPushButton("Restore Defaults")
+        self.btn_hotkeys_save.clicked.connect(self._save_hotkeys)
+        self.btn_hotkeys_defaults.clicked.connect(self._restore_default_hotkeys)
+        btn_row.addWidget(self.btn_hotkeys_save)
+        btn_row.addWidget(self.btn_hotkeys_defaults)
+        layout.addLayout(btn_row)
+
+        layout.addStretch()
+        return tab
+
+    def _save_hotkeys(self):
+        if not self.hotkeys:
+            self.statusBar().showMessage("Hotkey manager is not ready")
+            return
+
+        listen_hotkey = self.input_listen_hotkey.text().strip()
+        record_hotkey = self.input_record_hotkey.text().strip()
+        try:
+            self.hotkeys.update_hotkeys(listen_hotkey, record_hotkey)
+            applied_listen, applied_record = self.hotkeys.get_hotkeys()
+            self.input_listen_hotkey.setText(applied_listen)
+            self.input_record_hotkey.setText(applied_record)
+            if self._on_hotkeys_changed:
+                self._on_hotkeys_changed(applied_listen, applied_record)
+            self.statusBar().showMessage("Hotkeys updated")
+        except Exception as e:
+            QMessageBox.warning(self, "Hotkey Error", str(e))
+            self.statusBar().showMessage("Hotkey update failed")
+
+    def _restore_default_hotkeys(self):
+        self.input_listen_hotkey.setText(DEFAULT_HOTKEY_LISTEN)
+        self.input_record_hotkey.setText(DEFAULT_HOTKEY_RECORD)
+        self._save_hotkeys()
+
     # ── Shared transcription logic ─────────────────────────────────
     def _run_transcription(self, audio_bytes=None, file_path=None):
         self._worker = TranscribeWorker(self.client, audio_bytes=audio_bytes, file_path=file_path)
@@ -246,11 +336,27 @@ class MainWindow(QMainWindow):
     def _copy_output(self):
         text = self.text_output.toPlainText()
         if text:
-            from PyQt6.QtWidgets import QApplication
             QApplication.clipboard().setText(text)
             self.statusBar().showMessage("Copied to clipboard")
 
-    # ── Window close → hide to tray ───────────────────────────────
-    def closeEvent(self, event):
-        event.ignore()
+    def _clear_output(self):
+        self.text_output.clear()
+        self.statusBar().showMessage("Output cleared")
+
+    def _minimize_to_tray(self):
         self.hide()
+        self.statusBar().showMessage("Running in tray")
+        if self.tray:
+            self.tray.showMessage(
+                "LimeScribe",
+                "App minimized to tray. Use the tray icon to restore.",
+                QSystemTrayIcon.MessageIcon.Information,
+                2500,
+            )
+
+    # ── Window close → quit app/process ───────────────────────────
+    def closeEvent(self, event):
+        event.accept()
+        app = QApplication.instance()
+        if app:
+            app.quit()

@@ -23,7 +23,7 @@ class TrayIcon(QSystemTrayIcon):
         # Build icons lazily after QApplication exists.
         self._icons = {
             "idle": _make_circle_icon("#888888"),
-            "listening": _make_circle_icon("#00cc66"),
+            "listening": _make_circle_icon("#ff3333"),
             "recording": _make_circle_icon("#ff3333"),
         }
         super().__init__(self._icons["idle"], parent)
