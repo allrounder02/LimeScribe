@@ -4,12 +4,17 @@ from PyQt6.QtWidgets import (
     QSystemTrayIcon,
 )
 from PyQt6.QtCore import Qt, QThread, pyqtSignal
+import logging
 
 from core.lemonfox_client import LemonFoxClient
+from core.lemonfox_tts_client import LemonFoxTTSClient
 from core.audio_recorder import AudioRecorder
 from core.vad_listener import VADListener
-from core.text_output import copy_to_clipboard, paste_to_active_window
+from core.text_output import copy_to_clipboard
+from core.tts_audio_output import play_wav_bytes
 from hotkeys import DEFAULT_HOTKEY_LISTEN, DEFAULT_HOTKEY_RECORD
+
+logger = logging.getLogger(__name__)
 
 
 class TranscribeWorker(QThread):
@@ -37,6 +42,25 @@ class TranscribeWorker(QThread):
             self.error.emit(str(e))
 
 
+class TTSSynthesizeWorker(QThread):
+    """Background thread for TTS API calls."""
+
+    finished = pyqtSignal(bytes)
+    error = pyqtSignal(str)
+
+    def __init__(self, client: LemonFoxTTSClient, text: str):
+        super().__init__()
+        self.client = client
+        self.text = text
+
+    def run(self):
+        try:
+            audio_bytes = self.client.synthesize(self.text)
+            self.finished.emit(audio_bytes)
+        except Exception as e:
+            self.error.emit(str(e))
+
+
 class MainWindow(QMainWindow):
     """Main application window with Listening / Recording / File tabs."""
 
@@ -46,9 +70,12 @@ class MainWindow(QMainWindow):
         self.setMinimumSize(500, 400)
 
         self.client = LemonFoxClient()
+        self.tts_client = LemonFoxTTSClient()
         self.recorder = AudioRecorder()
         self.tray = None  # Set by app.py after construction
         self._worker = None
+        self._tts_worker = None
+        self._tts_last_audio = b""
         self._vad = None
         self._listen_workers = []  # keep refs so they don't get GC'd
         self.hotkeys = None
@@ -63,6 +90,7 @@ class MainWindow(QMainWindow):
         self.tabs.addTab(self._build_listening_tab(), "Listening")
         self.tabs.addTab(self._build_recording_tab(), "Recording")
         self.tabs.addTab(self._build_file_tab(), "File")
+        self.tabs.addTab(self._build_tts_tab(), "Text to Speech")
         self.tabs.addTab(self._build_settings_tab(), "Settings")
         layout.addWidget(self.tabs)
 
@@ -160,10 +188,7 @@ class MainWindow(QMainWindow):
 
     def _on_listen_transcription(self, text):
         """Append transcribed text in listening mode (continuous) and copy to clipboard."""
-        current = self.text_output.toPlainText()
-        separator = " " if current else ""
-        full_text = current + separator + text
-        self.text_output.setPlainText(full_text)
+        self._append_output_text(text)
         copy_to_clipboard(text)
         self.statusBar().showMessage("Listening (VAD)...")
 
@@ -261,6 +286,32 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage("Transcribing file...")
         self._run_transcription(file_path=self._selected_file)
 
+    # ── Text-to-Speech tab ────────────────────────────────────────
+    def _build_tts_tab(self):
+        tab = QWidget()
+        layout = QVBoxLayout(tab)
+
+        self.tts_input = QTextEdit()
+        self.tts_input.setPlaceholderText("Enter text to synthesize, or load from transcription output.")
+        layout.addWidget(self.tts_input)
+
+        btn_row = QHBoxLayout()
+        self.btn_tts_from_output = QPushButton("Use Transcription Output")
+        self.btn_tts_generate_play = QPushButton("Generate & Play")
+        self.btn_tts_save_audio = QPushButton("Save Last Audio")
+        self.btn_tts_save_audio.setEnabled(False)
+
+        self.btn_tts_from_output.clicked.connect(self._load_tts_from_output)
+        self.btn_tts_generate_play.clicked.connect(self._generate_tts_and_play)
+        self.btn_tts_save_audio.clicked.connect(self._save_last_tts_audio)
+
+        btn_row.addWidget(self.btn_tts_from_output)
+        btn_row.addWidget(self.btn_tts_generate_play)
+        btn_row.addWidget(self.btn_tts_save_audio)
+        layout.addLayout(btn_row)
+        layout.addStretch()
+        return tab
+
     # ── Settings tab ───────────────────────────────────────────────
     def _build_settings_tab(self):
         tab = QWidget()
@@ -325,11 +376,12 @@ class MainWindow(QMainWindow):
         self._worker.start()
 
     def _on_transcription_done(self, text):
-        self.text_output.setPlainText(text)
+        self._append_output_text(text)
         copy_to_clipboard(text)
         self.statusBar().showMessage("Transcription complete — copied to clipboard")
 
     def _on_transcription_error(self, err):
+        logger.error("Transcription failed: %s", err)
         self.text_output.setPlainText(f"Error: {err}")
         self.statusBar().showMessage("Transcription failed")
 
@@ -342,6 +394,72 @@ class MainWindow(QMainWindow):
     def _clear_output(self):
         self.text_output.clear()
         self.statusBar().showMessage("Output cleared")
+
+    def _append_output_text(self, text: str):
+        text = (text or "").strip()
+        if not text:
+            return
+        current = self.text_output.toPlainText().strip()
+        if current:
+            self.text_output.setPlainText(f"{current}\n{text}")
+        else:
+            self.text_output.setPlainText(text)
+
+    def _load_tts_from_output(self):
+        text = self.text_output.toPlainText().strip()
+        if not text:
+            self.statusBar().showMessage("No transcription output to load")
+            return
+        self.tts_input.setPlainText(text)
+        self.statusBar().showMessage("Loaded transcription output into TTS")
+
+    def _generate_tts_and_play(self):
+        text = self.tts_input.toPlainText().strip()
+        if not text:
+            self.statusBar().showMessage("No TTS input text")
+            return
+
+        self.btn_tts_generate_play.setEnabled(False)
+        self.statusBar().showMessage("Generating speech...")
+
+        self._tts_worker = TTSSynthesizeWorker(self.tts_client, text)
+        self._tts_worker.finished.connect(self._on_tts_done_play)
+        self._tts_worker.error.connect(self._on_tts_error)
+        self._tts_worker.start()
+
+    def _on_tts_done_play(self, audio_bytes: bytes):
+        self._tts_last_audio = audio_bytes or b""
+        self.btn_tts_generate_play.setEnabled(True)
+        self.btn_tts_save_audio.setEnabled(bool(self._tts_last_audio))
+        if not self._tts_last_audio:
+            self.statusBar().showMessage("TTS returned empty audio")
+            return
+        try:
+            play_wav_bytes(self._tts_last_audio)
+            self.statusBar().showMessage("Speech generated and playing")
+        except Exception as e:
+            self.statusBar().showMessage(f"TTS generated (playback failed): {e}")
+
+    def _save_last_tts_audio(self):
+        if not self._tts_last_audio:
+            self.statusBar().showMessage("No TTS audio to save")
+            return
+        path, _ = QFileDialog.getSaveFileName(
+            self, "Save TTS Audio", "tts_output.wav", "WAV Audio (*.wav);;All Files (*)"
+        )
+        if not path:
+            return
+        try:
+            with open(path, "wb") as f:
+                f.write(self._tts_last_audio)
+            self.statusBar().showMessage("TTS audio saved")
+        except OSError as e:
+            self.statusBar().showMessage(f"Failed to save audio: {e}")
+
+    def _on_tts_error(self, err: str):
+        logger.error("TTS failed: %s", err)
+        self.btn_tts_generate_play.setEnabled(True)
+        self.statusBar().showMessage(f"TTS failed: {err}")
 
     def _minimize_to_tray(self):
         self.hide()

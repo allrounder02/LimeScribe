@@ -2,16 +2,34 @@
 
 import sys
 import os
+import logging
 sys.path.insert(0, os.path.dirname(__file__))
 
 from PyQt6.QtWidgets import QApplication, QSystemTrayIcon
 from ui.main_window import MainWindow
 from ui.tray_icon import TrayIcon
 from hotkeys import HotkeyManager
-from config import load_app_settings, save_app_settings
+from config import load_app_settings, save_app_settings, LOG_LEVEL, LOG_FILE
+
+
+logger = logging.getLogger(__name__)
+
+
+def _configure_logging():
+    level = getattr(logging, LOG_LEVEL, logging.INFO)
+    handlers = [logging.StreamHandler()]
+    if LOG_FILE:
+        handlers.append(logging.FileHandler(LOG_FILE, encoding="utf-8"))
+    logging.basicConfig(
+        level=level,
+        format="%(asctime)s %(levelname)s [%(name)s] %(message)s",
+        handlers=handlers,
+    )
 
 
 def main():
+    _configure_logging()
+    logger.info("Starting LimeScribe")
     app = QApplication(sys.argv)
     app.setQuitOnLastWindowClosed(False)
     settings = load_app_settings()
@@ -52,6 +70,7 @@ def main():
 
     ret = app.exec()
     hotkeys.stop()
+    logger.info("Exiting LimeScribe")
     sys.exit(ret)
 
 

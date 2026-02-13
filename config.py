@@ -20,6 +20,21 @@ LEMONFOX_API_FALLBACK_URL = os.getenv(
     "LEMONFOX_API_FALLBACK_URL",
     "https://transcribe.whisperapi.com",
 )
+LEMONFOX_TTS_URL = os.getenv(
+    "LEMONFOX_TTS_URL",
+    "https://api.lemonfox.ai/v1/audio/speech",
+)
+LEMONFOX_TTS_FALLBACK_URL = os.getenv(
+    "LEMONFOX_TTS_FALLBACK_URL",
+    "",
+)
+LEMONFOX_TTS_MODEL = os.getenv("LEMONFOX_TTS_MODEL", "tts-1")
+LEMONFOX_TTS_VOICE = os.getenv("LEMONFOX_TTS_VOICE", "heart")
+LEMONFOX_TTS_LANGUAGE = os.getenv("LEMONFOX_TTS_LANGUAGE", "en-us")
+LEMONFOX_TTS_RESPONSE_FORMAT = os.getenv("LEMONFOX_TTS_RESPONSE_FORMAT", "wav")
+LEMONFOX_TTS_SPEED = float(os.getenv("LEMONFOX_TTS_SPEED", "1.0"))
+LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").upper()
+LOG_FILE = os.getenv("LOG_FILE", "").strip()
 
 _SETTINGS_PATH = Path(__file__).with_name("settings.json")
 DEFAULT_SETTINGS = {

@@ -1,4 +1,5 @@
 import io
+import logging
 import requests
 from config import (
     LEMONFOX_API_KEY,
@@ -7,6 +8,8 @@ from config import (
     LEMONFOX_API_URL,
     LEMONFOX_API_FALLBACK_URL,
 )
+
+logger = logging.getLogger(__name__)
 
 
 class LemonFoxClient:
@@ -46,6 +49,7 @@ class LemonFoxClient:
         last_error = None
         for endpoint in endpoints:
             try:
+                logger.debug("STT request -> %s", endpoint)
                 if hasattr(file_obj, "seek"):
                     file_obj.seek(0)
                 files = {"file": (filename, file_obj)}
@@ -61,6 +65,7 @@ class LemonFoxClient:
                     return resp.json().get("text", "")
                 return resp.text
             except requests.RequestException as e:
+                logger.warning("STT request failed on %s: %s", endpoint, e)
                 last_error = e
                 continue
 
