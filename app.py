@@ -8,21 +8,22 @@ from PyQt6.QtWidgets import QApplication, QSystemTrayIcon
 from ui.main_window import MainWindow
 from ui.tray_icon import TrayIcon
 from hotkeys import HotkeyManager
+from config import load_app_settings, save_app_settings
 
 
 def main():
     app = QApplication(sys.argv)
     app.setQuitOnLastWindowClosed(False)
+    settings = load_app_settings()
 
     window = MainWindow()
     tray = TrayIcon()
 
-    # Store tray reference so window can update icon states
-    window.tray = tray
+    # Store tray reference so window can update icon states and menu labels
+    window.attach_tray(tray)
 
     # Tray menu actions
-    tray.action_show.triggered.connect(window.show)
-    tray.action_show.triggered.connect(window.raise_)
+    tray.action_show.triggered.connect(lambda: _show_window(window))
     tray.action_quit.triggered.connect(app.quit)
 
     tray.action_listen.triggered.connect(lambda: _tray_toggle_listen(window))
@@ -30,13 +31,19 @@ def main():
 
     # Double-click tray to show window
     tray.activated.connect(
-        lambda reason: window.show() if reason == QSystemTrayIcon.ActivationReason.DoubleClick else None
+        lambda reason: _show_window(window) if reason == QSystemTrayIcon.ActivationReason.DoubleClick else None
     )
 
     # Global hotkeys (Ctrl+Alt+L = listen, Ctrl+Alt+R = record)
     hotkeys = HotkeyManager(
         on_listen_toggle=lambda: _tray_toggle_listen(window),
         on_record_toggle=lambda: _tray_toggle_record(window),
+        listen_hotkey=settings["hotkey_listen"],
+        record_hotkey=settings["hotkey_record"],
+    )
+    window.attach_hotkey_manager(
+        hotkeys,
+        on_hotkeys_changed=lambda listen, record: _save_hotkey_settings(listen, record),
     )
     hotkeys.start()
 
@@ -50,19 +57,35 @@ def main():
 
 def _tray_toggle_listen(window):
     """Toggle listening mode from tray menu."""
-    window.show()
+    _show_window(window)
     window.tabs.setCurrentIndex(0)  # Listening tab
     window.btn_listen_toggle.click()
 
 
 def _tray_toggle_record(window):
     """Toggle recording from tray menu."""
-    window.show()
+    _show_window(window)
     window.tabs.setCurrentIndex(1)  # Recording tab
     if window.recorder.recording:
         window._rec_stop()
     else:
         window._rec_start()
+
+
+def _show_window(window):
+    """Restore and focus the main window from tray/minimized states."""
+    window.showNormal()
+    window.raise_()
+    window.activateWindow()
+
+
+def _save_hotkey_settings(listen_hotkey: str, record_hotkey: str):
+    save_app_settings(
+        {
+            "hotkey_listen": listen_hotkey,
+            "hotkey_record": record_hotkey,
+        }
+    )
 
 
 if __name__ == "__main__":

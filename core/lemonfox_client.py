@@ -1,6 +1,12 @@
 import io
 import requests
-from config import API_URL, LEMONFOX_API_KEY, LEMONFOX_LANGUAGE, LEMONFOX_RESPONSE_FORMAT
+from config import (
+    LEMONFOX_API_KEY,
+    LEMONFOX_LANGUAGE,
+    LEMONFOX_RESPONSE_FORMAT,
+    LEMONFOX_API_URL,
+    LEMONFOX_API_FALLBACK_URL,
+)
 
 
 class LemonFoxClient:
@@ -10,6 +16,8 @@ class LemonFoxClient:
         self.api_key = api_key or LEMONFOX_API_KEY
         self.language = language or LEMONFOX_LANGUAGE
         self.response_format = response_format or LEMONFOX_RESPONSE_FORMAT
+        self.api_url = LEMONFOX_API_URL
+        self.fallback_api_url = LEMONFOX_API_FALLBACK_URL
 
     def _headers(self):
         return {"Authorization": f"Bearer {self.api_key}"}
@@ -31,16 +39,31 @@ class LemonFoxClient:
             "language": self.language,
             "response_format": self.response_format,
         }
-        files = {"file": (filename, file_obj)}
-        resp = requests.post(
-            API_URL,
-            headers=self._headers(),
-            data=data,
-            files=files,
-            timeout=120,
-        )
-        resp.raise_for_status()
+        endpoints = [self.api_url]
+        if self.fallback_api_url and self.fallback_api_url != self.api_url:
+            endpoints.append(self.fallback_api_url)
 
-        if self.response_format == "json":
-            return resp.json().get("text", "")
-        return resp.text
+        last_error = None
+        for endpoint in endpoints:
+            try:
+                if hasattr(file_obj, "seek"):
+                    file_obj.seek(0)
+                files = {"file": (filename, file_obj)}
+                resp = requests.post(
+                    endpoint,
+                    headers=self._headers(),
+                    data=data,
+                    files=files,
+                    timeout=120,
+                )
+                resp.raise_for_status()
+                if self.response_format == "json":
+                    return resp.json().get("text", "")
+                return resp.text
+            except requests.RequestException as e:
+                last_error = e
+                continue
+
+        if last_error:
+            raise last_error
+        raise RuntimeError("Transcription request failed without an explicit error.")

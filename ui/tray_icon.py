@@ -16,19 +16,17 @@ def _make_circle_icon(color: str) -> QIcon:
     return QIcon(pixmap)
 
 
-# Pre-built icons for each state
-ICONS = {
-    "idle": _make_circle_icon("#888888"),
-    "listening": _make_circle_icon("#00cc66"),
-    "recording": _make_circle_icon("#ff3333"),
-}
-
-
 class TrayIcon(QSystemTrayIcon):
     """System tray icon with context menu for the transcriber app."""
 
     def __init__(self, parent=None):
-        super().__init__(ICONS["idle"], parent)
+        # Build icons lazily after QApplication exists.
+        self._icons = {
+            "idle": _make_circle_icon("#888888"),
+            "listening": _make_circle_icon("#ff3333"),
+            "recording": _make_circle_icon("#ff3333"),
+        }
+        super().__init__(self._icons["idle"], parent)
         self.setToolTip("LemonFox Transcriber — Idle")
         self._build_menu()
 
@@ -49,7 +47,7 @@ class TrayIcon(QSystemTrayIcon):
 
     def set_state(self, state: str):
         """Update icon and tooltip. state: 'idle', 'listening', or 'recording'."""
-        icon = ICONS.get(state, ICONS["idle"])
+        icon = self._icons.get(state, self._icons["idle"])
         self.setIcon(icon)
         labels = {"idle": "Idle", "listening": "Listening", "recording": "Recording"}
         self.setToolTip(f"LemonFox Transcriber — {labels.get(state, 'Idle')}")

@@ -2,7 +2,8 @@ PyQt6>=6.6
 requests>=2.31
 sounddevice>=0.4
 numpy>=1.24
-webrtcvad>=2.0.10
+webrtcvad-wheels>=2.0.14; platform_system == "Windows"
+webrtcvad>=2.0.10; platform_system != "Windows"
 pyperclip>=1.8
 pyautogui>=0.9
 pynput>=1.7
