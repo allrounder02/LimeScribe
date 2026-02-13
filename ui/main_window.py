@@ -1,7 +1,7 @@
 from PyQt6.QtWidgets import (
     QMainWindow, QWidget, QTabWidget, QVBoxLayout, QHBoxLayout,
-    QPushButton, QTextEdit, QLabel, QFileDialog, QLineEdit, QMessageBox, QApplication, QComboBox,
-    QSystemTrayIcon,
+    QPushButton, QTextEdit, QLabel, QFileDialog, QLineEdit, QMessageBox, QApplication, QComboBox, QInputDialog,
+    QSystemTrayIcon, QSplitter,
 )
 from PyQt6.QtCore import Qt, QThread, pyqtSignal
 import logging
@@ -14,6 +14,8 @@ from core.text_output import copy_to_clipboard
 from core.tts_audio_output import play_wav_bytes
 from hotkeys import DEFAULT_HOTKEY_LISTEN, DEFAULT_HOTKEY_RECORD
 from config import (
+    LEMONFOX_LANGUAGE,
+    LEMONFOX_RESPONSE_FORMAT,
     LEMONFOX_TTS_MODEL,
     LEMONFOX_TTS_VOICE,
     LEMONFOX_TTS_LANGUAGE,
@@ -27,6 +29,7 @@ TTS_MODEL_PRESETS = ["tts-1", "tts-1-hd"]
 TTS_VOICE_PRESETS = ["heart", "alloy", "ash", "ballad", "coral", "echo", "sage", "shimmer", "verse"]
 TTS_LANGUAGE_PRESETS = ["en-us", "en-gb", "de-de", "fr-fr", "es-es", "it-it"]
 TTS_RESPONSE_FORMAT_PRESETS = ["wav", "mp3", "ogg", "flac"]
+STT_RESPONSE_FORMAT_PRESETS = ["json", "text", "srt", "vtt"]
 
 
 class TranscribeWorker(QThread):
@@ -92,29 +95,40 @@ class MainWindow(QMainWindow):
         self._listen_workers = []  # keep refs so they don't get GC'd
         self.hotkeys = None
         self._on_hotkeys_changed = None
+        self._on_stt_settings_changed = None
         self._on_tts_settings_changed = None
+        self._on_profiles_changed = None
+        self._profiles = []
 
         central = QWidget()
         self.setCentralWidget(central)
         layout = QVBoxLayout(central)
 
-        # Tabs
+        # Vertical splitter so output panel can be resized by dragging.
+        self.main_splitter = QSplitter(Qt.Orientation.Vertical)
+        layout.addWidget(self.main_splitter)
+
+        # Tabs (top pane)
         self.tabs = QTabWidget()
         self.tabs.addTab(self._build_listening_tab(), "Listening")
         self.tabs.addTab(self._build_recording_tab(), "Recording")
         self.tabs.addTab(self._build_file_tab(), "File")
         self.tabs.addTab(self._build_tts_tab(), "Text to Speech")
         self.tabs.addTab(self._build_settings_tab(), "Settings")
-        layout.addWidget(self.tabs)
+        self.main_splitter.addWidget(self.tabs)
 
-        # Shared output area
+        # Shared output area (bottom pane)
+        output_panel = QWidget()
+        output_layout = QVBoxLayout(output_panel)
+        output_layout.setContentsMargins(0, 0, 0, 0)
+
         self.output_label = QLabel("Transcription Output:")
-        layout.addWidget(self.output_label)
+        output_layout.addWidget(self.output_label)
 
         self.text_output = QTextEdit()
         self.text_output.setReadOnly(False)
         self.text_output.setPlaceholderText("Transcription output appears here. You can edit it directly.")
-        layout.addWidget(self.text_output)
+        output_layout.addWidget(self.text_output)
 
         # Output actions
         btn_row = QHBoxLayout()
@@ -131,7 +145,11 @@ class MainWindow(QMainWindow):
         btn_row.addWidget(self.btn_edit_output)
         btn_row.addWidget(self.btn_clear)
         btn_row.addWidget(self.btn_copy)
-        layout.addLayout(btn_row)
+        output_layout.addLayout(btn_row)
+
+        self.main_splitter.addWidget(output_panel)
+        self.main_splitter.setStretchFactor(0, 3)
+        self.main_splitter.setStretchFactor(1, 2)
 
         # Status bar
         self.statusBar().showMessage("Ready")
@@ -149,6 +167,16 @@ class MainWindow(QMainWindow):
         self.input_listen_hotkey.setText(listen_hotkey)
         self.input_record_hotkey.setText(record_hotkey)
 
+    def attach_stt_settings(self, settings: dict, on_stt_settings_changed=None):
+        """Attach persisted STT settings and apply to client/live UI."""
+        self._on_stt_settings_changed = on_stt_settings_changed
+        self.input_stt_language.setText(settings.get("stt_language", self.client.language))
+        self._set_combo_value(
+            self.input_stt_response_format,
+            settings.get("stt_response_format", self.client.response_format),
+        )
+        self._save_stt_settings_ui(show_status=False)
+
     def attach_tts_settings(self, settings: dict, on_tts_settings_changed=None):
         """Attach persisted TTS settings and apply to client/live UI."""
         self._on_tts_settings_changed = on_tts_settings_changed
@@ -161,6 +189,24 @@ class MainWindow(QMainWindow):
         )
         self.input_tts_speed.setText(str(settings.get("tts_speed", self.tts_client.speed)))
         self._save_tts_settings_ui(show_status=False)
+
+    def attach_profiles(self, settings: dict, on_profiles_changed=None):
+        """Attach persisted profile list and active selection."""
+        self._on_profiles_changed = on_profiles_changed
+        profiles = settings.get("profiles")
+        if not isinstance(profiles, list) or not profiles:
+            profiles = [self._build_profile("Default")]
+        self._profiles = [dict(p) for p in profiles if isinstance(p, dict) and p.get("name")]
+        if not self._profiles:
+            self._profiles = [self._build_profile("Default")]
+
+        self._refresh_profiles_combo()
+        active_name = settings.get("active_profile", self._profiles[0]["name"])
+        idx = self.combo_profiles.findText(active_name)
+        self.combo_profiles.setCurrentIndex(idx if idx >= 0 else 0)
+        active = self._find_profile_by_name(self.combo_profiles.currentText().strip())
+        if active:
+            self._apply_profile_to_ui(active)
 
     # ── Listening tab ──────────────────────────────────────────────
     def _build_listening_tab(self):
@@ -346,7 +392,15 @@ class MainWindow(QMainWindow):
     def _build_settings_tab(self):
         tab = QWidget()
         layout = QVBoxLayout(tab)
+        settings_pages = QTabWidget()
+        settings_pages.addTab(self._build_settings_general_page(), "General")
+        settings_pages.addTab(self._build_settings_speech_page(), "Speech")
+        layout.addWidget(settings_pages)
+        return tab
 
+    def _build_settings_general_page(self):
+        page = QWidget()
+        layout = QVBoxLayout(page)
         layout.addWidget(QLabel("Global Hotkeys"))
         layout.addWidget(QLabel("Format example: Ctrl+Alt+L"))
 
@@ -370,6 +424,38 @@ class MainWindow(QMainWindow):
         btn_row.addWidget(self.btn_hotkeys_save)
         btn_row.addWidget(self.btn_hotkeys_defaults)
         layout.addLayout(btn_row)
+        layout.addStretch()
+        return page
+
+    def _build_settings_speech_page(self):
+        page = QWidget()
+        layout = QVBoxLayout(page)
+
+        layout.addWidget(QLabel("Speech-to-Text"))
+
+        stt_lang_row = QHBoxLayout()
+        stt_lang_row.addWidget(QLabel("Language:"))
+        self.input_stt_language = QLineEdit(LEMONFOX_LANGUAGE)
+        stt_lang_row.addWidget(self.input_stt_language)
+        layout.addLayout(stt_lang_row)
+
+        stt_fmt_row = QHBoxLayout()
+        stt_fmt_row.addWidget(QLabel("Response Format:"))
+        self.input_stt_response_format = QComboBox()
+        self.input_stt_response_format.setEditable(True)
+        self.input_stt_response_format.addItems(STT_RESPONSE_FORMAT_PRESETS)
+        self.input_stt_response_format.setCurrentText(LEMONFOX_RESPONSE_FORMAT)
+        stt_fmt_row.addWidget(self.input_stt_response_format)
+        layout.addLayout(stt_fmt_row)
+
+        stt_btn_row = QHBoxLayout()
+        self.btn_stt_settings_save = QPushButton("Save STT Settings")
+        self.btn_stt_settings_defaults = QPushButton("Restore STT Defaults")
+        self.btn_stt_settings_save.clicked.connect(self._save_stt_settings_ui)
+        self.btn_stt_settings_defaults.clicked.connect(self._restore_default_stt_settings)
+        stt_btn_row.addWidget(self.btn_stt_settings_save)
+        stt_btn_row.addWidget(self.btn_stt_settings_defaults)
+        layout.addLayout(stt_btn_row)
 
         layout.addWidget(QLabel(""))
         layout.addWidget(QLabel("Text-to-Speech"))
@@ -426,8 +512,34 @@ class MainWindow(QMainWindow):
         tts_btn_row.addWidget(self.btn_tts_settings_defaults)
         layout.addLayout(tts_btn_row)
 
+        layout.addWidget(QLabel(""))
+        layout.addWidget(QLabel("Profiles"))
+        layout.addWidget(QLabel("Save and reuse named STT/TTS setting presets"))
+
+        profile_row = QHBoxLayout()
+        profile_row.addWidget(QLabel("Profile:"))
+        self.combo_profiles = QComboBox()
+        self.combo_profiles.setEditable(False)
+        profile_row.addWidget(self.combo_profiles)
+        layout.addLayout(profile_row)
+
+        profile_btn_row = QHBoxLayout()
+        self.btn_profile_apply = QPushButton("Apply Profile")
+        self.btn_profile_save_new = QPushButton("Save as New")
+        self.btn_profile_update = QPushButton("Update Current")
+        self.btn_profile_delete = QPushButton("Delete")
+        self.btn_profile_apply.clicked.connect(self._apply_selected_profile)
+        self.btn_profile_save_new.clicked.connect(self._save_profile_as_new)
+        self.btn_profile_update.clicked.connect(self._update_selected_profile)
+        self.btn_profile_delete.clicked.connect(self._delete_selected_profile)
+        profile_btn_row.addWidget(self.btn_profile_apply)
+        profile_btn_row.addWidget(self.btn_profile_save_new)
+        profile_btn_row.addWidget(self.btn_profile_update)
+        profile_btn_row.addWidget(self.btn_profile_delete)
+        layout.addLayout(profile_btn_row)
+
         layout.addStretch()
-        return tab
+        return page
 
     def _save_hotkeys(self):
         if not self.hotkeys:
@@ -452,6 +564,38 @@ class MainWindow(QMainWindow):
         self.input_listen_hotkey.setText(DEFAULT_HOTKEY_LISTEN)
         self.input_record_hotkey.setText(DEFAULT_HOTKEY_RECORD)
         self._save_hotkeys()
+
+    def _collect_stt_settings_from_ui(self) -> dict:
+        language = self.input_stt_language.text().strip()
+        response_format = self.input_stt_response_format.currentText().strip().lower()
+        if not language or not response_format:
+            raise ValueError("STT language and response format are required.")
+        return {
+            "stt_language": language,
+            "stt_response_format": response_format,
+        }
+
+    def _apply_stt_settings_to_client(self, settings: dict):
+        self.client.language = settings["stt_language"]
+        self.client.response_format = settings["stt_response_format"]
+
+    def _save_stt_settings_ui(self, show_status=True):
+        try:
+            settings = self._collect_stt_settings_from_ui()
+            self._apply_stt_settings_to_client(settings)
+            if self._on_stt_settings_changed:
+                self._on_stt_settings_changed(settings)
+            if show_status:
+                self.statusBar().showMessage("STT settings updated")
+        except Exception as e:
+            if show_status:
+                QMessageBox.warning(self, "STT Settings Error", str(e))
+                self.statusBar().showMessage("STT settings update failed")
+
+    def _restore_default_stt_settings(self):
+        self.input_stt_language.setText(LEMONFOX_LANGUAGE)
+        self._set_combo_value(self.input_stt_response_format, LEMONFOX_RESPONSE_FORMAT)
+        self._save_stt_settings_ui()
 
     def _collect_tts_settings_from_ui(self) -> dict:
         model = self.input_tts_model.currentText().strip()
@@ -502,6 +646,135 @@ class MainWindow(QMainWindow):
         self._set_combo_value(self.input_tts_response_format, LEMONFOX_TTS_RESPONSE_FORMAT)
         self.input_tts_speed.setText(str(LEMONFOX_TTS_SPEED))
         self._save_tts_settings_ui()
+
+    def _collect_profile_payload(self) -> dict:
+        return {
+            "stt_language": self.input_stt_language.text().strip(),
+            "stt_response_format": self.input_stt_response_format.currentText().strip().lower(),
+            "tts_model": self.input_tts_model.currentText().strip(),
+            "tts_voice": self.input_tts_voice.currentText().strip(),
+            "tts_language": self.input_tts_language.currentText().strip(),
+            "tts_response_format": self.input_tts_response_format.currentText().strip().lower(),
+            "tts_speed": self.input_tts_speed.text().strip(),
+        }
+
+    def _build_profile(self, name: str) -> dict:
+        profile = {"name": name.strip()}
+        profile.update(self._collect_profile_payload())
+        return profile
+
+    def _refresh_profiles_combo(self):
+        current = self.combo_profiles.currentText().strip() if hasattr(self, "combo_profiles") else ""
+        self.combo_profiles.blockSignals(True)
+        self.combo_profiles.clear()
+        for profile in self._profiles:
+            self.combo_profiles.addItem(profile["name"])
+        idx = self.combo_profiles.findText(current)
+        self.combo_profiles.setCurrentIndex(idx if idx >= 0 else 0)
+        self.combo_profiles.blockSignals(False)
+
+    def _emit_profiles_changed(self):
+        if self._on_profiles_changed and self._profiles:
+            self._on_profiles_changed(
+                {
+                    "profiles": self._profiles,
+                    "active_profile": self.combo_profiles.currentText().strip() or self._profiles[0]["name"],
+                }
+            )
+
+    def _find_profile_by_name(self, name: str):
+        for profile in self._profiles:
+            if profile["name"] == name:
+                return profile
+        return None
+
+    def _apply_profile_to_ui(self, profile: dict):
+        self.input_stt_language.setText(profile.get("stt_language", LEMONFOX_LANGUAGE))
+        self._set_combo_value(
+            self.input_stt_response_format,
+            profile.get("stt_response_format", LEMONFOX_RESPONSE_FORMAT),
+        )
+        self._set_combo_value(self.input_tts_model, profile.get("tts_model", LEMONFOX_TTS_MODEL))
+        self._set_combo_value(self.input_tts_voice, profile.get("tts_voice", LEMONFOX_TTS_VOICE))
+        self._set_combo_value(self.input_tts_language, profile.get("tts_language", LEMONFOX_TTS_LANGUAGE))
+        self._set_combo_value(
+            self.input_tts_response_format,
+            profile.get("tts_response_format", LEMONFOX_TTS_RESPONSE_FORMAT),
+        )
+        self.input_tts_speed.setText(str(profile.get("tts_speed", LEMONFOX_TTS_SPEED)))
+        self._save_stt_settings_ui(show_status=False)
+        self._save_tts_settings_ui(show_status=False)
+
+    def _apply_selected_profile(self):
+        name = self.combo_profiles.currentText().strip()
+        profile = self._find_profile_by_name(name)
+        if not profile:
+            self.statusBar().showMessage("No profile selected")
+            return
+        self._apply_profile_to_ui(profile)
+        self._emit_profiles_changed()
+        self.statusBar().showMessage(f"Profile applied: {name}")
+
+    def _save_profile_as_new(self):
+        name, ok = QInputDialog.getText(self, "Save Profile", "Profile nickname:")
+        name = (name or "").strip()
+        if not ok:
+            return
+        if not name:
+            self.statusBar().showMessage("Profile name cannot be empty")
+            return
+        if self._find_profile_by_name(name):
+            QMessageBox.warning(self, "Profile Error", "A profile with that name already exists.")
+            return
+        try:
+            self._save_stt_settings_ui(show_status=False)
+            self._save_tts_settings_ui(show_status=False)
+            self._profiles.append(self._build_profile(name))
+            self._refresh_profiles_combo()
+            self._set_combo_value(self.combo_profiles, name)
+            self._emit_profiles_changed()
+            self.statusBar().showMessage(f"Profile saved: {name}")
+        except Exception as e:
+            QMessageBox.warning(self, "Profile Error", str(e))
+
+    def _update_selected_profile(self):
+        name = self.combo_profiles.currentText().strip()
+        profile = self._find_profile_by_name(name)
+        if not profile:
+            self.statusBar().showMessage("No profile selected")
+            return
+        try:
+            self._save_stt_settings_ui(show_status=False)
+            self._save_tts_settings_ui(show_status=False)
+            updated = self._build_profile(name)
+            profile.clear()
+            profile.update(updated)
+            self._emit_profiles_changed()
+            self.statusBar().showMessage(f"Profile updated: {name}")
+        except Exception as e:
+            QMessageBox.warning(self, "Profile Error", str(e))
+
+    def _delete_selected_profile(self):
+        name = self.combo_profiles.currentText().strip()
+        if not name:
+            return
+        if len(self._profiles) <= 1:
+            self.statusBar().showMessage("At least one profile must remain")
+            return
+        confirm = QMessageBox.question(
+            self,
+            "Delete Profile",
+            f"Delete profile '{name}'? This cannot be undone.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if confirm != QMessageBox.StandardButton.Yes:
+            self.statusBar().showMessage("Profile deletion canceled")
+            return
+        self._profiles = [p for p in self._profiles if p["name"] != name]
+        self._refresh_profiles_combo()
+        self._emit_profiles_changed()
+        self.statusBar().showMessage(f"Profile deleted: {name}")
 
     @staticmethod
     def _set_combo_value(combo: QComboBox, value: str):

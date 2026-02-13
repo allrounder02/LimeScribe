@@ -63,9 +63,17 @@ def main():
         hotkeys,
         on_hotkeys_changed=lambda listen, record: _save_hotkey_settings(listen, record),
     )
+    window.attach_stt_settings(
+        settings,
+        on_stt_settings_changed=lambda stt_settings: _save_stt_settings(stt_settings),
+    )
     window.attach_tts_settings(
         settings,
         on_tts_settings_changed=lambda tts_settings: _save_tts_settings(tts_settings),
+    )
+    window.attach_profiles(
+        settings,
+        on_profiles_changed=lambda profile_settings: _save_profile_settings(profile_settings),
     )
     hotkeys.start()
 
@@ -113,6 +121,14 @@ def _save_hotkey_settings(listen_hotkey: str, record_hotkey: str):
 
 def _save_tts_settings(tts_settings: dict):
     save_app_settings(tts_settings)
+
+
+def _save_stt_settings(stt_settings: dict):
+    save_app_settings(stt_settings)
+
+
+def _save_profile_settings(profile_settings: dict):
+    save_app_settings(profile_settings)
 
 
 if __name__ == "__main__":

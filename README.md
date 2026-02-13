@@ -143,6 +143,9 @@ The app starts in the tray and opens the main window.
 - The transcription output field is editable so you can adjust wording before copying or using TTS.
 
 ### Settings tab
+- Split into two pages for cleaner organization:
+  - **General**: global hotkeys
+  - **Speech**: STT/TTS options and profiles
 - View and edit global keyboard shortcuts for:
   - Toggle Listening
   - Toggle Recording
@@ -152,8 +155,16 @@ The app starts in the tray and opens the main window.
   - Language
   - Response format
   - Speed
+- View and edit STT runtime settings:
+  - Language
+  - Response format
+- Manage named profiles (nickname-based presets) for STT/TTS settings:
+  - Apply Profile
+  - Save as New
+  - Update Current
+  - Delete
 - Save changes without restarting the app
-- Restore hotkey and TTS defaults
+- Restore hotkey/STT/TTS defaults
 
 ## Optional CLI Smoke Test
 
