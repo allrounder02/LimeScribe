@@ -2,16 +2,34 @@
 
 import sys
 import os
+import logging
 sys.path.insert(0, os.path.dirname(__file__))
 
 from PyQt6.QtWidgets import QApplication, QSystemTrayIcon
 from ui.main_window import MainWindow
 from ui.tray_icon import TrayIcon
 from hotkeys import HotkeyManager
-from config import load_app_settings, save_app_settings
+from config import load_app_settings, save_app_settings, LOG_LEVEL, LOG_FILE
+
+
+logger = logging.getLogger(__name__)
+
+
+def _configure_logging():
+    level = getattr(logging, LOG_LEVEL, logging.INFO)
+    handlers = [logging.StreamHandler()]
+    if LOG_FILE:
+        handlers.append(logging.FileHandler(LOG_FILE, encoding="utf-8"))
+    logging.basicConfig(
+        level=level,
+        format="%(asctime)s %(levelname)s [%(name)s] %(message)s",
+        handlers=handlers,
+    )
 
 
 def main():
+    _configure_logging()
+    logger.info("Starting LimeScribe")
     app = QApplication(sys.argv)
     app.setQuitOnLastWindowClosed(False)
     settings = load_app_settings()
@@ -45,6 +63,22 @@ def main():
         hotkeys,
         on_hotkeys_changed=lambda listen, record: _save_hotkey_settings(listen, record),
     )
+    window.attach_stt_settings(
+        settings,
+        on_stt_settings_changed=lambda stt_settings: _save_stt_settings(stt_settings),
+    )
+    window.attach_tts_settings(
+        settings,
+        on_tts_settings_changed=lambda tts_settings: _save_tts_settings(tts_settings),
+    )
+    window.attach_profiles(
+        settings,
+        on_profiles_changed=lambda profile_settings: _save_profile_settings(profile_settings),
+    )
+    window.attach_ui_settings(
+        settings,
+        on_ui_settings_changed=lambda ui_settings: _save_ui_settings(ui_settings),
+    )
     hotkeys.start()
 
     tray.show()
@@ -52,6 +86,7 @@ def main():
 
     ret = app.exec()
     hotkeys.stop()
+    logger.info("Exiting LimeScribe")
     sys.exit(ret)
 
 
@@ -86,6 +121,22 @@ def _save_hotkey_settings(listen_hotkey: str, record_hotkey: str):
             "hotkey_record": record_hotkey,
         }
     )
+
+
+def _save_tts_settings(tts_settings: dict):
+    save_app_settings(tts_settings)
+
+
+def _save_stt_settings(stt_settings: dict):
+    save_app_settings(stt_settings)
+
+
+def _save_profile_settings(profile_settings: dict):
+    save_app_settings(profile_settings)
+
+
+def _save_ui_settings(ui_settings: dict):
+    save_app_settings(ui_settings)
 
 
 if __name__ == "__main__":
