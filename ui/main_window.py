@@ -5,10 +5,10 @@ from typing import Optional
 
 from PyQt6.QtWidgets import (
     QMainWindow, QWidget, QTabWidget, QVBoxLayout, QHBoxLayout,
-    QPushButton, QTextEdit, QLabel, QFileDialog, QApplication,
+    QPushButton, QTextEdit, QLabel, QComboBox, QToolButton, QFileDialog, QApplication,
     QSystemTrayIcon, QSplitter, QSizePolicy,
 )
-from PyQt6.QtCore import Qt, QTimer, pyqtSignal
+from PyQt6.QtCore import Qt, QTimer, QSize, pyqtSignal
 
 from core.app_config import AppConfig
 from core.transcription_service import TranscriptionService
@@ -34,7 +34,8 @@ class MainWindow(QMainWindow):
     def __init__(self, config: Optional[AppConfig] = None):
         super().__init__()
         self.setWindowTitle("LemonFox Transcriber")
-        self.setMinimumSize(500, 400)
+        self.setMinimumHeight(480)
+        self.resize(980, 680)
 
         self._config = config or AppConfig.from_env()
 
@@ -70,6 +71,9 @@ class MainWindow(QMainWindow):
         self.auto_copy_transcription = True
         self.clear_output_after_copy = False
         self.stop_listening_after_copy = False
+        self.keep_wrapping_parentheses = False
+        self.dark_mode = False
+        self._server_online = True
         self._profiles = []
         self._updating_listening_profiles = False
         self._tts_profiles = []
@@ -115,6 +119,7 @@ class MainWindow(QMainWindow):
         self.settings_panel.tts_settings_changed.connect(self._on_tts_settings_from_panel)
         self.settings_panel.profiles_changed.connect(self._on_profiles_from_panel)
         self.settings_panel.tts_profiles_changed.connect(self._on_tts_profiles_from_panel)
+        self.settings_panel.ui_settings_changed.connect(self._on_ui_settings_from_panel)
         self.tabs.addTab(self.settings_panel, "Settings")
         self.tabs.setTabIcon(4, ui_icon(self, "tab_settings"))
 
@@ -188,6 +193,7 @@ class MainWindow(QMainWindow):
             auto_copy=bool(settings.get("auto_copy_transcription", True)),
             clear_output_after_copy=bool(settings.get("clear_output_after_copy", False)),
             stop_listening_after_copy=bool(settings.get("stop_listening_after_copy", False)),
+            keep_wrapping_parentheses=bool(settings.get("keep_wrapping_parentheses", False)),
             vad_noise_level=settings.get("vad_noise_level", None),
             vad_aggressiveness=settings.get("vad_aggressiveness", self.stt_service.config.vad_aggressiveness),
             vad_min_speech_seconds=settings.get(
@@ -261,6 +267,12 @@ class MainWindow(QMainWindow):
 
     def attach_ui_settings(self, settings: dict, on_ui_settings_changed=None):
         self._on_ui_settings_changed = on_ui_settings_changed
+        self.dark_mode = bool(settings.get("dark_mode", False))
+        self.settings_panel.apply_ui_settings(self.dark_mode)
+        self._apply_theme()
+        self._set_server_status(self._server_online)
+        self._sync_retry_last_failed_button()
+        self._set_listening_button_style(self.stt_service.is_listening())
         raw = str(settings.get("ui_splitter_sizes", "560,340")).strip()
         try:
             parts = [int(x.strip()) for x in raw.split(",") if x.strip()]
@@ -276,17 +288,45 @@ class MainWindow(QMainWindow):
         layout = QVBoxLayout(tab)
 
         profile_row = QHBoxLayout()
+        profile_row.setSpacing(8)
         profile_row.addWidget(QLabel("Listening Profile:"))
         self.combo_listening_profiles = QComboBox()
         self.combo_listening_profiles.setEditable(False)
+        min_profile_chars = 25
+        min_profile_width = self.combo_listening_profiles.fontMetrics().horizontalAdvance("M" * min_profile_chars)
+        self.combo_listening_profiles.setMinimumWidth(min_profile_width + 36)
+        self.combo_listening_profiles.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        self.combo_listening_profiles.setMinimumContentsLength(min_profile_chars)
+        self.combo_listening_profiles.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToContentsOnFirstShow)
         self.combo_listening_profiles.currentTextChanged.connect(self._on_listening_profile_selected)
         profile_row.addWidget(self.combo_listening_profiles, 1)
+
+        self.btn_server_state = QToolButton()
+        self.btn_server_state.setText("")
+        self.btn_server_state.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self.btn_server_state.setIconSize(QSize(16, 16))
+        self.btn_server_state.setFixedSize(30, 30)
+        self.btn_server_state.setIcon(ui_icon(self, "listening_server_status"))
+        self.btn_server_state.setToolTip("Server: Connected")
+        profile_row.addWidget(self.btn_server_state)
+
+        self.btn_retry_last_failed = QToolButton()
+        self.btn_retry_last_failed.setText("")
+        self.btn_retry_last_failed.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self.btn_retry_last_failed.setIconSize(QSize(16, 16))
+        self.btn_retry_last_failed.setFixedSize(30, 30)
+        self.btn_retry_last_failed.setIcon(ui_icon(self, "listening_retry_last"))
+        self.btn_retry_last_failed.setToolTip("Recreate Last Message")
+        self.btn_retry_last_failed.clicked.connect(self._retry_last_failed_transcription)
+        profile_row.addWidget(self.btn_retry_last_failed)
         layout.addLayout(profile_row)
 
         self.btn_listen_toggle = QPushButton("Start Listening")
         self.btn_listen_toggle.setCheckable(True)
         self.btn_listen_toggle.clicked.connect(self._toggle_listening)
         layout.addWidget(self.btn_listen_toggle)
+        self._set_server_status(True)
+        self._sync_retry_last_failed_button()
         layout.addStretch()
         return tab
 
@@ -311,6 +351,7 @@ class MainWindow(QMainWindow):
         self.btn_listen_toggle.setChecked(listening)
         self.btn_listen_toggle.blockSignals(False)
         self.btn_listen_toggle.setText("Stop Listening" if listening else "Start Listening")
+        self._set_listening_button_style(listening)
         self.statusBar().showMessage("Listening (VAD)..." if listening else "Ready")
         if self.tray:
             self.tray.set_state("listening" if listening else "idle")
@@ -425,6 +466,7 @@ class MainWindow(QMainWindow):
         self.auto_copy_transcription = bool(settings.get("auto_copy_transcription", True))
         self.clear_output_after_copy = bool(settings.get("clear_output_after_copy", False))
         self.stop_listening_after_copy = bool(settings.get("stop_listening_after_copy", False))
+        self.keep_wrapping_parentheses = bool(settings.get("keep_wrapping_parentheses", False))
         if self._on_stt_settings_changed:
             self._on_stt_settings_changed(settings)
         self.statusBar().showMessage("STT settings updated")
@@ -443,6 +485,19 @@ class MainWindow(QMainWindow):
             self._on_tts_settings_changed(settings_clean)
         if not silent:
             self.statusBar().showMessage("TTS settings updated")
+
+    def _on_ui_settings_from_panel(self, settings: dict):
+        dark_mode = bool(settings.get("dark_mode", False))
+        changed = dark_mode != self.dark_mode
+        self.dark_mode = dark_mode
+        if changed:
+            self._apply_theme()
+            self._set_server_status(self._server_online)
+            self._sync_retry_last_failed_button()
+            self._set_listening_button_style(self.stt_service.is_listening())
+            self.statusBar().showMessage("Theme updated")
+        if self._on_ui_settings_changed:
+            self._on_ui_settings_changed({"dark_mode": self.dark_mode})
 
     def _on_profiles_from_panel(self, profile_data: dict):
         profiles = profile_data.get("profiles", [])
@@ -616,17 +671,13 @@ class MainWindow(QMainWindow):
     # ── Service callbacks (run on main thread via signals) ─────────
 
     def _on_transcription_done(self, text):
-        self._append_output_text(text)
+        self._set_server_status(True)
+        self._sync_retry_last_failed_button()
+        display_text = self._format_transcription_text(text)
+        self._append_output_text(display_text)
         if self.auto_copy_transcription:
-            copy_to_clipboard(text)
-            output_cleared = False
-            listening_stopped = False
-            if self.clear_output_after_copy:
-                self.text_output.clear()
-                output_cleared = True
-            if self.stop_listening_after_copy and self.stt_service.is_listening():
-                self._stop_listening()
-                listening_stopped = True
+            copy_to_clipboard(display_text)
+            output_cleared, listening_stopped = self._apply_post_copy_actions()
             status = "Transcription complete — copied to clipboard"
             if output_cleared:
                 status += ", output cleared"
@@ -639,6 +690,9 @@ class MainWindow(QMainWindow):
     def _on_transcription_error(self, err):
         logger.error("Transcription failed: %s", err)
         self._append_output_text(f"[ERROR] {err}")
+        if self._is_server_failure_message(err):
+            self._set_server_status(False, str(err))
+        self._sync_retry_last_failed_button()
         if "saved to '" in str(err):
             self.statusBar().showMessage("Transcription failed — audio was backed up locally")
         else:
@@ -773,7 +827,89 @@ class MainWindow(QMainWindow):
         text = self.text_output.toPlainText()
         if text:
             QApplication.clipboard().setText(text)
-            self.statusBar().showMessage("Copied to clipboard")
+            output_cleared, listening_stopped = self._apply_post_copy_actions()
+            status = "Copied to clipboard"
+            if output_cleared:
+                status += ", output cleared"
+            if listening_stopped:
+                status += ", listening stopped"
+            self.statusBar().showMessage(status)
+
+    def _apply_post_copy_actions(self) -> tuple[bool, bool]:
+        output_cleared = False
+        listening_stopped = False
+        if self.clear_output_after_copy:
+            self.text_output.clear()
+            output_cleared = True
+        if self.stop_listening_after_copy and self.stt_service.is_listening():
+            self._stop_listening()
+            listening_stopped = True
+        return output_cleared, listening_stopped
+
+    def _format_transcription_text(self, text: str) -> str:
+        raw = (text or "").strip()
+        if self.keep_wrapping_parentheses:
+            return raw
+        cleaned = self._strip_wrapping_parentheses(raw)
+        return cleaned or raw
+
+    @staticmethod
+    def _strip_wrapping_parentheses(text: str) -> str:
+        value = (text or "").strip()
+        # Remove quote wrappers first so cases like '"(hello)"' normalize correctly.
+        quote_pairs = [
+            ('"', '"'),
+            ("'", "'"),
+            ("`", "`"),
+            ("“", "”"),
+            ("‘", "’"),
+        ]
+        changed = True
+        while changed and value:
+            changed = False
+            for left, right in quote_pairs:
+                if len(value) < 2 or not value.startswith(left) or not value.endswith(right):
+                    continue
+                inner = value[len(left):len(value) - len(right)].strip()
+                if not inner:
+                    continue
+                value = inner
+                changed = True
+                break
+
+        paren_pairs = [
+            ("(", ")"),
+            ("（", "）"),
+        ]
+        changed = True
+        while changed and value:
+            changed = False
+            for left, right in paren_pairs:
+                if not MainWindow._is_wrapped_by_pair(value, left, right):
+                    continue
+                inner = value[len(left):len(value) - len(right)].strip()
+                if not inner:
+                    continue
+                value = inner
+                changed = True
+                break
+        return value
+
+    @staticmethod
+    def _is_wrapped_by_pair(value: str, left: str, right: str) -> bool:
+        if len(value) < 2 or not value.startswith(left) or not value.endswith(right):
+            return False
+        depth = 0
+        for i, ch in enumerate(value):
+            if ch == left:
+                depth += 1
+            elif ch == right:
+                depth -= 1
+                if depth < 0:
+                    return False
+                if depth == 0 and i != len(value) - 1:
+                    return False
+        return depth == 0
 
     def _clear_output(self):
         self.text_output.clear()
@@ -814,20 +950,188 @@ class MainWindow(QMainWindow):
             sizes = self.main_splitter.sizes()
             self._on_ui_settings_changed({"ui_splitter_sizes": f"{sizes[0]},{sizes[1]}"})
 
-    def _apply_theme(self):
-        self.setStyleSheet(
+    @staticmethod
+    def _is_server_failure_message(err: str) -> bool:
+        msg = str(err or "").lower()
+        signals = (
+            "http",
+            "timeout",
+            "timed out",
+            "connection",
+            "request failed",
+            "status code",
+            "server",
+            "captured audio was saved",
+            "source audio was saved",
+        )
+        return any(token in msg for token in signals)
+
+    def _set_server_status(self, online: bool, detail: str = ""):
+        self._server_online = bool(online)
+        icon_key = "listening_server_status"
+        if self._server_online:
+            tooltip = "Server: Connected"
+            bg = "#2e7d32" if not self.dark_mode else "#3f9b52"
+            border = "#256528" if not self.dark_mode else "#347f44"
+        else:
+            icon_key = "listening_server_offline"
+            tooltip = "Server Offline - Stop Speaking"
+            bg = "#c62828" if not self.dark_mode else "#d64545"
+            border = "#a32020" if not self.dark_mode else "#bf3d3d"
+        if detail:
+            tooltip = f"{tooltip}\n{detail}"
+        self.btn_server_state.setIcon(ui_icon(self, icon_key))
+        self.btn_server_state.setToolTip(tooltip)
+        self.btn_server_state.setStyleSheet(
+            f"""
+            QToolButton {{
+                background: {bg};
+                border: 1px solid {border};
+                border-radius: 6px;
+                padding: 4px;
+            }}
             """
+        )
+
+    def _sync_retry_last_failed_button(self):
+        enabled = self.stt_service.has_last_failed_capture()
+        self.btn_retry_last_failed.setEnabled(enabled)
+        if enabled:
+            bg = "#2f6d9a" if not self.dark_mode else "#3f7dac"
+            hover = "#3c7cab" if not self.dark_mode else "#4c8dbf"
+            border = "#285f86" if not self.dark_mode else "#356f99"
+        else:
+            bg = "#9aaec0" if not self.dark_mode else "#4f6275"
+            hover = bg
+            border = "#8ca1b5" if not self.dark_mode else "#45596d"
+        self.btn_retry_last_failed.setStyleSheet(
+            f"""
+            QToolButton {{
+                background: {bg};
+                border: 1px solid {border};
+                border-radius: 6px;
+                padding: 4px;
+            }}
+            QToolButton:hover {{
+                background: {hover};
+            }}
+            """
+        )
+
+    def _retry_last_failed_transcription(self):
+        if not self.stt_service.retry_last_failed():
+            self.statusBar().showMessage("No failed transcription available to retry")
+            self._sync_retry_last_failed_button()
+            return
+        self.statusBar().showMessage("Recreating last failed message...")
+
+    def _set_listening_button_style(self, listening: bool):
+        if listening:
+            base = "#c62828" if not self.dark_mode else "#d64545"
+            hover = "#d84343" if not self.dark_mode else "#e35f5f"
+            pressed = "#ad2323" if not self.dark_mode else "#bf3d3d"
+        else:
+            base = "#2f6d9a" if not self.dark_mode else "#3f7dac"
+            hover = "#3c7cab" if not self.dark_mode else "#4c8dbf"
+            pressed = "#285f86" if not self.dark_mode else "#356f99"
+        self.btn_listen_toggle.setStyleSheet(
+            f"""
+            QPushButton {{
+                background: {base};
+                color: #ffffff;
+                border: none;
+                border-radius: 6px;
+                padding: 6px 10px;
+            }}
+            QPushButton:hover {{ background: {hover}; }}
+            QPushButton:pressed {{ background: {pressed}; }}
+            """
+        )
+
+    def _update_minimum_width_for_tabs(self):
+        """Set window minimum width so all top tabs stay fully visible."""
+        self.ensurePolished()
+        tab_bar = self.tabs.tabBar()
+        tab_count = tab_bar.count()
+        if tab_count <= 0:
+            return
+
+        tab_total = sum(tab_bar.tabSizeHint(i).width() for i in range(tab_count))
+        if tab_total <= 0:
+            return
+
+        # Matches QTabBar stylesheet margin-right on each tab.
+        tab_spacing_total = 4 * max(0, tab_count - 1)
+
+        central_margins = self.centralWidget().contentsMargins() if self.centralWidget() else None
+        tab_margins = self.tabs.contentsMargins()
+        bar_margins = tab_bar.contentsMargins()
+
+        margins_total = (
+            tab_margins.left() + tab_margins.right()
+            + bar_margins.left() + bar_margins.right()
+            + (central_margins.left() + central_margins.right() if central_margins else 0)
+        )
+
+        # Small buffer for frame/chrome and minor style variance.
+        calculated_min_width = tab_total + tab_spacing_total + margins_total + 36
+        self.setMinimumWidth(max(560, calculated_min_width))
+
+    def _apply_theme(self):
+        if self.dark_mode:
+            stylesheet = """
+            QMainWindow { background: #10141a; }
+            QTabWidget::pane { border: 1px solid #2f3947; background: #161b22; border-radius: 8px; }
+            QTabBar::tab {
+                background: #1c2430;
+                color: #d6deea;
+                border: 1px solid #2d3848;
+                padding: 6px 12px;
+                margin-right: 4px;
+                border-top-left-radius: 6px;
+                border-top-right-radius: 6px;
+            }
+            QTabBar::tab:selected { background: #232d3a; border-bottom-color: #232d3a; color: #f0f5fb; }
+            QScrollArea#settingsScrollArea { background: #161b22; border: none; }
+            QScrollArea#settingsScrollArea > QWidget#qt_scrollarea_viewport { background: #161b22; }
+            QWidget#settingsScrollContent { background: #161b22; }
+            QTextEdit, QLineEdit, QComboBox, QSpinBox, QDoubleSpinBox {
+                border: 1px solid #334155;
+                border-radius: 6px;
+                padding: 4px;
+                background: #0f1722;
+                color: #e5ecf6;
+            }
+            QPushButton { background: #3f7dac; color: #ffffff; border: none; border-radius: 6px; padding: 6px 10px; }
+            QPushButton:hover { background: #4c8dbf; }
+            QPushButton:pressed { background: #356f99; }
+            QLabel { color: #d6deea; }
+            QCheckBox { color: #d6deea; }
+            QStatusBar { background: #161b22; color: #d6deea; border-top: 1px solid #2f3947; }
+            """
+        else:
+            stylesheet = """
             QMainWindow { background: #f3f7fb; }
             QTabWidget::pane { border: 1px solid #c8d6e5; background: #ffffff; border-radius: 8px; }
             QTabBar::tab { background: #dfeaf4; border: 1px solid #b8cadb; padding: 6px 12px; margin-right: 4px; border-top-left-radius: 6px; border-top-right-radius: 6px; }
             QTabBar::tab:selected { background: #ffffff; border-bottom-color: #ffffff; }
-            QTextEdit, QLineEdit, QComboBox { border: 1px solid #b8cadb; border-radius: 6px; padding: 4px; background: #fbfdff; }
+            QScrollArea#settingsScrollArea { background: #ffffff; border: none; }
+            QScrollArea#settingsScrollArea > QWidget#qt_scrollarea_viewport { background: #ffffff; }
+            QWidget#settingsScrollContent { background: #ffffff; }
+            QTextEdit, QLineEdit, QComboBox, QSpinBox, QDoubleSpinBox {
+                border: 1px solid #b8cadb;
+                border-radius: 6px;
+                padding: 4px;
+                background: #fbfdff;
+            }
             QPushButton { background: #2f6d9a; color: #ffffff; border: none; border-radius: 6px; padding: 6px 10px; }
             QPushButton:hover { background: #3c7cab; }
             QPushButton:pressed { background: #285f86; }
             QLabel { color: #1f3b53; }
+            QCheckBox { color: #1f3b53; }
             """
-        )
+        self.setStyleSheet(stylesheet)
+        self._update_minimum_width_for_tabs()
 
     def closeEvent(self, event):
         self._tts_ui_timer.stop()

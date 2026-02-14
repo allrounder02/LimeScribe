@@ -57,6 +57,7 @@ class SettingsPanel(QWidget):
     tts_settings_changed = pyqtSignal(dict)
     profiles_changed = pyqtSignal(dict)
     tts_profiles_changed = pyqtSignal(dict)
+    ui_settings_changed = pyqtSignal(dict)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -94,6 +95,7 @@ class SettingsPanel(QWidget):
         auto_copy: bool,
         clear_output_after_copy: bool = False,
         stop_listening_after_copy: bool = False,
+        keep_wrapping_parentheses: bool = False,
         vad_noise_level=None,
         vad_aggressiveness=None,
         vad_min_speech_seconds=None,
@@ -103,6 +105,7 @@ class SettingsPanel(QWidget):
         self.chk_auto_copy_transcription.setChecked(auto_copy)
         self.chk_clear_output_after_copy.setChecked(bool(clear_output_after_copy))
         self.chk_stop_listening_after_copy.setChecked(bool(stop_listening_after_copy))
+        self.chk_keep_wrapping_parentheses.setChecked(bool(keep_wrapping_parentheses))
         aggr = self._clamp_aggressiveness(vad_aggressiveness if vad_aggressiveness is not None else VAD_AGGRESSIVENESS)
         min_speech = self._clamp_min_speech(
             vad_min_speech_seconds if vad_min_speech_seconds is not None else VAD_MIN_SPEECH_SECONDS
@@ -128,6 +131,13 @@ class SettingsPanel(QWidget):
         self.input_tts_speed.setText(speed)
         self._updating_tts_controls = False
         self._emit_tts_settings(show_status=False, silent=True)
+
+    def apply_ui_settings(self, dark_mode: bool):
+        if not hasattr(self, "chk_dark_mode"):
+            return
+        self.chk_dark_mode.blockSignals(True)
+        self.chk_dark_mode.setChecked(bool(dark_mode))
+        self.chk_dark_mode.blockSignals(False)
 
     def apply_profiles(self, profiles: list, active_name: str):
         self._profiles = [dict(p) for p in profiles if isinstance(p, dict) and p.get("name")]
@@ -196,6 +206,7 @@ class SettingsPanel(QWidget):
             "auto_copy_transcription": self.chk_auto_copy_transcription.isChecked(),
             "clear_output_after_copy": self.chk_clear_output_after_copy.isChecked(),
             "stop_listening_after_copy": self.chk_stop_listening_after_copy.isChecked(),
+            "keep_wrapping_parentheses": self.chk_keep_wrapping_parentheses.isChecked(),
             "vad_noise_level": vad_noise_level,
             "vad_aggressiveness": vad_aggressiveness,
             "vad_min_speech_seconds": vad_min_speech_seconds,
@@ -227,6 +238,8 @@ class SettingsPanel(QWidget):
     @staticmethod
     def _wrap_in_scroll(widget: QWidget) -> QScrollArea:
         scroll = QScrollArea()
+        scroll.setObjectName("settingsScrollArea")
+        widget.setObjectName("settingsScrollContent")
         scroll.setWidgetResizable(True)
         scroll.setFrameShape(QScrollArea.Shape.NoFrame)
         scroll.setWidget(widget)
@@ -260,6 +273,13 @@ class SettingsPanel(QWidget):
         btn_row.addWidget(self.btn_hotkeys_save)
         btn_row.addWidget(self.btn_hotkeys_defaults)
         layout.addLayout(btn_row)
+
+        layout.addWidget(QLabel(""))
+        layout.addWidget(QLabel("Appearance"))
+        self.chk_dark_mode = QCheckBox("Enable dark mode")
+        self.chk_dark_mode.setChecked(False)
+        self.chk_dark_mode.toggled.connect(lambda _v: self._emit_ui_settings())
+        layout.addWidget(self.chk_dark_mode)
         layout.addStretch()
         return page
 
@@ -345,13 +365,20 @@ class SettingsPanel(QWidget):
 
         self.chk_auto_copy_transcription = QCheckBox("Auto-copy transcription to clipboard")
         self.chk_auto_copy_transcription.setChecked(True)
+        self.chk_auto_copy_transcription.toggled.connect(lambda _v: self._schedule_stt_auto_apply())
         layout.addWidget(self.chk_auto_copy_transcription)
         self.chk_clear_output_after_copy = QCheckBox("Clear output after copying to clipboard")
         self.chk_clear_output_after_copy.setChecked(False)
+        self.chk_clear_output_after_copy.toggled.connect(lambda _v: self._schedule_stt_auto_apply())
         layout.addWidget(self.chk_clear_output_after_copy)
         self.chk_stop_listening_after_copy = QCheckBox("Stop listening after copy to clipboard")
         self.chk_stop_listening_after_copy.setChecked(False)
+        self.chk_stop_listening_after_copy.toggled.connect(lambda _v: self._schedule_stt_auto_apply())
         layout.addWidget(self.chk_stop_listening_after_copy)
+        self.chk_keep_wrapping_parentheses = QCheckBox("Keep wrapping parentheses in transcription output")
+        self.chk_keep_wrapping_parentheses.setChecked(False)
+        self.chk_keep_wrapping_parentheses.toggled.connect(lambda _v: self._schedule_stt_auto_apply())
+        layout.addWidget(self.chk_keep_wrapping_parentheses)
 
         layout.addWidget(QLabel(""))
         layout.addWidget(QLabel("Profiles"))
@@ -526,6 +553,9 @@ class SettingsPanel(QWidget):
         self.input_record_hotkey.setText(DEFAULT_HOTKEY_RECORD)
         self._save_hotkeys()
 
+    def _emit_ui_settings(self):
+        self.ui_settings_changed.emit({"dark_mode": bool(self.chk_dark_mode.isChecked())})
+
     # ── STT / VAD helpers ──────────────────────────────────────────
 
     @staticmethod
@@ -617,6 +647,7 @@ class SettingsPanel(QWidget):
         self.chk_auto_copy_transcription.setChecked(True)
         self.chk_clear_output_after_copy.setChecked(False)
         self.chk_stop_listening_after_copy.setChecked(False)
+        self.chk_keep_wrapping_parentheses.setChecked(False)
         self._updating_vad_controls = True
         self.input_vad_aggressiveness.setValue(self._clamp_aggressiveness(VAD_AGGRESSIVENESS))
         self.input_vad_min_speech_seconds.setValue(self._clamp_min_speech(VAD_MIN_SPEECH_SECONDS))

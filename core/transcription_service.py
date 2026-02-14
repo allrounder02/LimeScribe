@@ -36,6 +36,11 @@ class TranscriptionService:
         self._on_error = on_error
         self._recovery_root = Path(__file__).resolve().parent.parent / "data" / "failed_stt"
         self._recovery_lock = threading.Lock()
+        self._last_failed_lock = threading.Lock()
+        self._last_failed_kind = ""
+        self._last_failed_audio: bytes = b""
+        self._last_failed_file_path = ""
+        self._last_failed_source = ""
 
     # -- VAD Listening Mode --
 
@@ -153,10 +158,12 @@ class TranscriptionService:
         def worker():
             try:
                 text = self.client.transcribe_file(file_path)
+                self._clear_last_failed()
                 if self._on_transcription:
                     self._on_transcription(text)
             except Exception as e:
                 logger.error("File transcription failed: %s", e)
+                self._remember_failed_file(file_path=file_path, source="file_upload")
                 backup = self._persist_failed_file(file_path, source="file_upload", error=str(e))
                 if self._on_error:
                     if backup:
@@ -174,10 +181,12 @@ class TranscriptionService:
         """Transcribe audio bytes (used by both VAD and recording modes)."""
         try:
             text = self.client.transcribe_bytes(wav_bytes)
+            self._clear_last_failed()
             if self._on_transcription:
                 self._on_transcription(text)
         except Exception as e:
             logger.error("Transcription failed: %s", e)
+            self._remember_failed_audio(wav_bytes=wav_bytes, source=source)
             backup = self._persist_failed_audio(wav_bytes, source=source, error=str(e))
             if self._on_error:
                 if backup:
@@ -297,3 +306,50 @@ class TranscriptionService:
                 original_path=file_path,
             )
             return str(copied_path) if copied_path else None
+
+    def _remember_failed_audio(self, wav_bytes: bytes, source: str):
+        with self._last_failed_lock:
+            self._last_failed_kind = "audio"
+            self._last_failed_audio = bytes(wav_bytes or b"")
+            self._last_failed_file_path = ""
+            self._last_failed_source = str(source or "audio_capture")
+
+    def _remember_failed_file(self, file_path: str, source: str):
+        with self._last_failed_lock:
+            self._last_failed_kind = "file"
+            self._last_failed_audio = b""
+            self._last_failed_file_path = str(file_path or "").strip()
+            self._last_failed_source = str(source or "file_upload")
+
+    def _clear_last_failed(self):
+        with self._last_failed_lock:
+            self._last_failed_kind = ""
+            self._last_failed_audio = b""
+            self._last_failed_file_path = ""
+            self._last_failed_source = ""
+
+    def has_last_failed_capture(self) -> bool:
+        with self._last_failed_lock:
+            if self._last_failed_kind == "audio":
+                return bool(self._last_failed_audio)
+            if self._last_failed_kind == "file":
+                return bool(self._last_failed_file_path)
+            return False
+
+    def retry_last_failed(self) -> bool:
+        with self._last_failed_lock:
+            kind = self._last_failed_kind
+            audio = bytes(self._last_failed_audio)
+            file_path = self._last_failed_file_path
+            source = self._last_failed_source or "retry"
+        if kind == "audio" and audio:
+            threading.Thread(
+                target=self._transcribe_bytes,
+                args=(audio, f"{source}_retry"),
+                daemon=True,
+            ).start()
+            return True
+        if kind == "file" and file_path:
+            self.transcribe_file(file_path)
+            return True
+        return False

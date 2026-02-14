@@ -60,6 +60,7 @@ DEFAULT_SETTINGS = {
     "auto_copy_transcription": True,
     "clear_output_after_copy": False,
     "stop_listening_after_copy": False,
+    "keep_wrapping_parentheses": False,
     "vad_noise_level": _DEFAULT_VAD_NOISE_LEVEL,
     "vad_aggressiveness": VAD_AGGRESSIVENESS,
     "vad_min_speech_seconds": VAD_MIN_SPEECH_SECONDS,
@@ -81,6 +82,7 @@ DEFAULT_SETTINGS = {
             "tts_speed": str(LEMONFOX_TTS_SPEED),
         }
     ],
+    "dark_mode": False,
     "ui_splitter_sizes": "560,340",
     "active_profile": "Default",
     "profiles": [
