@@ -1,6 +1,6 @@
-# LimeScribe
+# ZestVoice
 
-LimeScribe is a speech-to-text and text-to-speech application powered by the **LemonFox.ai** API (Whisper large-v3). It runs as a **Windows 11 desktop app** (PyQt6 GUI with system tray) or as a **headless CLI** for servers, Docker containers, and automation pipelines.
+ZestVoice is a speech-to-text and text-to-speech application powered by the **LemonFox.ai** API (Whisper large-v3). It runs as a **Windows 11 desktop app** (PyQt6 GUI with system tray) or as a **headless CLI** for servers, Docker containers, and automation pipelines.
 
 ## Features
 
@@ -46,7 +46,7 @@ LimeScribe is a speech-to-text and text-to-speech application powered by the **L
 ### Desktop (Windows)
 
 ```bash
-git clone <repo-url> && cd LimeScribe
+git clone <repo-url> && cd ZestVoice
 python -m venv .venv
 
 # PowerShell

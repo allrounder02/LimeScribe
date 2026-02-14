@@ -1,0 +1,36 @@
+{
+  "version": 1,
+  "source": "https://www.lemonfox.ai/apis/text-to-speech",
+  "notes": "Voice IDs and language mappings are taken from the voices explicitly listed in the docs. Gender tags are UI metadata and can be adjusted.",
+  "voices": [
+    { "id": "heart", "actor": "Heart", "language": "en-us", "gender": "female" },
+    { "id": "bella", "actor": "Bella", "language": "en-us", "gender": "female" },
+    { "id": "michael", "actor": "Michael", "language": "en-us", "gender": "male" },
+    { "id": "alloy", "actor": "Alloy", "language": "en-us", "gender": "male" },
+    { "id": "aoede", "actor": "Aoede", "language": "en-us", "gender": "female" },
+    { "id": "kore", "actor": "Kore", "language": "en-us", "gender": "male" },
+    { "id": "jessica", "actor": "Jessica", "language": "en-us", "gender": "female" },
+    { "id": "nicole", "actor": "Nicole", "language": "en-us", "gender": "female" },
+    { "id": "nova", "actor": "Nova", "language": "en-us", "gender": "female" },
+    { "id": "river", "actor": "River", "language": "en-us", "gender": "female" },
+    { "id": "sarah", "actor": "Sarah", "language": "en-us", "gender": "female" },
+    { "id": "sky", "actor": "Sky", "language": "en-us", "gender": "female" },
+    { "id": "echo", "actor": "Echo", "language": "en-us", "gender": "male" },
+    { "id": "eric", "actor": "Eric", "language": "en-us", "gender": "male" },
+    { "id": "fenrir", "actor": "Fenrir", "language": "en-us", "gender": "male" },
+    { "id": "liam", "actor": "Liam", "language": "en-us", "gender": "male" },
+    { "id": "onyx", "actor": "Onyx", "language": "en-us", "gender": "male" },
+    { "id": "puck", "actor": "Puck", "language": "en-us", "gender": "neutral" },
+    { "id": "adam", "actor": "Adam", "language": "en-us", "gender": "male" },
+    { "id": "santa", "actor": "Santa", "language": "en-us", "gender": "male" },
+
+    { "id": "alice", "actor": "Alice", "language": "en-gb", "gender": "female" },
+    { "id": "emma", "actor": "Emma", "language": "en-gb", "gender": "female" },
+    { "id": "isabella", "actor": "Isabella", "language": "en-gb", "gender": "female" },
+    { "id": "lily", "actor": "Lily", "language": "en-gb", "gender": "female" },
+    { "id": "daniel", "actor": "Daniel", "language": "en-gb", "gender": "male" },
+    { "id": "fable", "actor": "Fable", "language": "en-gb", "gender": "neutral" },
+    { "id": "george", "actor": "George", "language": "en-gb", "gender": "male" },
+    { "id": "lewis", "actor": "Lewis", "language": "en-gb", "gender": "male" }
+  ]
+}

@@ -74,7 +74,15 @@ class LemonFoxTTSClient:
         last_error = None
         for endpoint in endpoints:
             try:
-                logger.debug("TTS request -> %s", endpoint)
+                logger.debug(
+                    "TTS request -> %s | model=%s voice=%s language=%s response_format=%s speed=%s",
+                    endpoint,
+                    payload["model"],
+                    payload["voice"],
+                    payload["language"],
+                    payload["response_format"],
+                    payload["speed"],
+                )
                 resp = client.post(
                     endpoint,
                     headers=self._headers(),

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Headless LimeScribe — no GUI required.
+"""Headless ZestVoice — no GUI required.
 
 Usage:
     python cli.py listen                     # VAD listening, prints to stdout
@@ -100,7 +100,7 @@ def cmd_tts(config: AppConfig, text: str, output_path: str):
 
 
 def main():
-    parser = argparse.ArgumentParser(description="LimeScribe Headless Transcriber")
+    parser = argparse.ArgumentParser(description="ZestVoice Headless Transcriber")
     parser.add_argument("--log-level", default="INFO", help="Logging level")
     sub = parser.add_subparsers(dest="command", required=True)
 

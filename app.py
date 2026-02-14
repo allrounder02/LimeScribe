@@ -6,11 +6,14 @@ import logging
 sys.path.insert(0, os.path.dirname(__file__))
 
 from PyQt6.QtWidgets import QApplication, QSystemTrayIcon
+from PyQt6.QtGui import QIcon
+from PyQt6.QtCore import QSize
 from ui.main_window import MainWindow
 from ui.tray_icon import TrayIcon
 from hotkeys import HotkeyManager
 from config import load_app_settings, save_app_settings, LOG_LEVEL, LOG_FILE
 from core.app_config import AppConfig
+from core.assets import asset_path
 from core.http_client import close_shared_client
 
 
@@ -31,13 +34,19 @@ def _configure_logging():
 
 def main():
     _configure_logging()
-    logger.info("Starting LimeScribe")
+    logger.info("Starting ZestVoice")
     app = QApplication(sys.argv)
+    _configure_windows_taskbar_identity()
+    app_icon = _load_taskbar_icon()
+    if not app_icon.isNull():
+        app.setWindowIcon(app_icon)
     app.setQuitOnLastWindowClosed(False)
     config = AppConfig.from_env()
     settings = load_app_settings()
 
     window = MainWindow(config=config)
+    if not app_icon.isNull():
+        window.setWindowIcon(app_icon)
     tray = TrayIcon()
 
     # Store tray reference so window can update icon states and menu labels
@@ -78,6 +87,10 @@ def main():
         settings,
         on_profiles_changed=lambda profile_settings: _save_profile_settings(profile_settings),
     )
+    window.attach_tts_profiles(
+        settings,
+        on_tts_profiles_changed=lambda tts_profile_settings: _save_tts_profile_settings(tts_profile_settings),
+    )
     window.attach_ui_settings(
         settings,
         on_ui_settings_changed=lambda ui_settings: _save_ui_settings(ui_settings),
@@ -90,8 +103,43 @@ def main():
     ret = app.exec()
     hotkeys.stop()
     close_shared_client()
-    logger.info("Exiting LimeScribe")
+    logger.info("Exiting ZestVoice")
     sys.exit(ret)
+
+
+def _load_app_icon() -> QIcon:
+    for name in ("Zest_Voice_Logo_small.png", "Zest_Voice_Logo_transparent.png"):
+        icon = QIcon(str(asset_path("icons", name)))
+        if not icon.isNull():
+            return icon
+    return QIcon()
+
+
+def _load_taskbar_icon() -> QIcon:
+    """Build a multi-size icon for crisp taskbar rendering."""
+    icon = QIcon()
+    source = None
+    for name in ("Zest_Voice_Logo_small.png", "Zest_Voice_Logo_transparent.png"):
+        path = asset_path("icons", name)
+        if path.exists():
+            source = str(path)
+            break
+    if source:
+        for size in (16, 20, 24, 32, 40, 48, 64, 128, 256):
+            icon.addFile(source, QSize(size, size))
+    return icon if not icon.isNull() else _load_app_icon()
+
+
+def _configure_windows_taskbar_identity():
+    """Ensure Windows groups this app under ZestVoice with its own taskbar icon."""
+    if not sys.platform.startswith("win"):
+        return
+    try:
+        import ctypes
+
+        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("ZestVoice.App")
+    except Exception as e:
+        logger.debug("Unable to set Windows AppUserModelID: %s", e)
 
 
 def _tray_toggle_listen(window):
@@ -137,6 +185,10 @@ def _save_stt_settings(stt_settings: dict):
 
 def _save_profile_settings(profile_settings: dict):
     save_app_settings(profile_settings)
+
+
+def _save_tts_profile_settings(tts_profile_settings: dict):
+    save_app_settings(tts_profile_settings)
 
 
 def _save_ui_settings(ui_settings: dict):

@@ -14,7 +14,7 @@ This guide covers running LimeScribe without a GUI -- on a Linux server, in a Do
 
 ```bash
 git clone <repo-url>
-cd LimeScribe
+cd ZestVoice
 ```
 
 ### 2. Install core dependencies only
