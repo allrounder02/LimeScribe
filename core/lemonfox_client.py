@@ -1,13 +1,13 @@
 import io
 import logging
-import requests
-from config import (
-    LEMONFOX_API_KEY,
-    LEMONFOX_LANGUAGE,
-    LEMONFOX_RESPONSE_FORMAT,
-    LEMONFOX_API_URL,
-    LEMONFOX_API_FALLBACK_URL,
-)
+from typing import TYPE_CHECKING
+
+import httpx
+
+from core.http_client import get_shared_client
+
+if TYPE_CHECKING:
+    from core.app_config import AppConfig
 
 logger = logging.getLogger(__name__)
 
@@ -15,12 +15,23 @@ logger = logging.getLogger(__name__)
 class LemonFoxClient:
     """Wrapper for the LemonFox.ai speech-to-text API."""
 
-    def __init__(self, api_key=None, language=None, response_format=None):
-        self.api_key = api_key or LEMONFOX_API_KEY
-        self.language = language or LEMONFOX_LANGUAGE
-        self.response_format = response_format or LEMONFOX_RESPONSE_FORMAT
-        self.api_url = LEMONFOX_API_URL
-        self.fallback_api_url = LEMONFOX_API_FALLBACK_URL
+    def __init__(self, config: "AppConfig | None" = None, api_key=None, language=None, response_format=None):
+        if config:
+            self.api_key = api_key or config.api_key
+            self.language = language or config.stt_language
+            self.response_format = response_format or config.stt_response_format
+            self.api_url = config.api_url
+            self.fallback_api_url = config.api_fallback_url
+        else:
+            from config import (
+                LEMONFOX_API_KEY, LEMONFOX_LANGUAGE, LEMONFOX_RESPONSE_FORMAT,
+                LEMONFOX_API_URL, LEMONFOX_API_FALLBACK_URL,
+            )
+            self.api_key = api_key or LEMONFOX_API_KEY
+            self.language = language or LEMONFOX_LANGUAGE
+            self.response_format = response_format or LEMONFOX_RESPONSE_FORMAT
+            self.api_url = LEMONFOX_API_URL
+            self.fallback_api_url = LEMONFOX_API_FALLBACK_URL
 
     def _headers(self):
         return {"Authorization": f"Bearer {self.api_key}"}
@@ -46,6 +57,7 @@ class LemonFoxClient:
         if self.fallback_api_url and self.fallback_api_url != self.api_url:
             endpoints.append(self.fallback_api_url)
 
+        client = get_shared_client()
         last_error = None
         for endpoint in endpoints:
             try:
@@ -53,18 +65,17 @@ class LemonFoxClient:
                 if hasattr(file_obj, "seek"):
                     file_obj.seek(0)
                 files = {"file": (filename, file_obj)}
-                resp = requests.post(
+                resp = client.post(
                     endpoint,
                     headers=self._headers(),
                     data=data,
                     files=files,
-                    timeout=120,
                 )
                 resp.raise_for_status()
                 if self.response_format == "json":
                     return resp.json().get("text", "")
                 return resp.text
-            except requests.RequestException as e:
+            except httpx.HTTPError as e:
                 logger.warning("STT request failed on %s: %s", endpoint, e)
                 last_error = e
                 continue

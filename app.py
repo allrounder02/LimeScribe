@@ -10,6 +10,8 @@ from ui.main_window import MainWindow
 from ui.tray_icon import TrayIcon
 from hotkeys import HotkeyManager
 from config import load_app_settings, save_app_settings, LOG_LEVEL, LOG_FILE
+from core.app_config import AppConfig
+from core.http_client import close_shared_client
 
 
 logger = logging.getLogger(__name__)
@@ -32,9 +34,10 @@ def main():
     logger.info("Starting LimeScribe")
     app = QApplication(sys.argv)
     app.setQuitOnLastWindowClosed(False)
+    config = AppConfig.from_env()
     settings = load_app_settings()
 
-    window = MainWindow()
+    window = MainWindow(config=config)
     tray = TrayIcon()
 
     # Store tray reference so window can update icon states and menu labels
@@ -86,6 +89,7 @@ def main():
 
     ret = app.exec()
     hotkeys.stop()
+    close_shared_client()
     logger.info("Exiting LimeScribe")
     sys.exit(ret)
 
@@ -101,7 +105,7 @@ def _tray_toggle_record(window):
     """Toggle recording from tray menu."""
     _show_window(window)
     window.tabs.setCurrentIndex(1)  # Recording tab
-    if window.recorder.recording:
+    if window.stt_service.is_recording:
         window._rec_stop()
     else:
         window._rec_start()

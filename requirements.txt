@@ -1,10 +1,13 @@
-PyQt6>=6.6
-requests>=2.31
+# Core (required for all modes — GUI and headless)
+httpx[http2]>=0.27
 sounddevice>=0.4
 numpy>=1.24
 webrtcvad-wheels>=2.0.14; platform_system == "Windows"
 webrtcvad>=2.0.10; platform_system != "Windows"
+python-dotenv>=1.0
+
+# GUI-only (needed for Windows desktop app, not required for headless/Docker)
+PyQt6>=6.6
 pyperclip>=1.8
 pyautogui>=0.9
 pynput>=1.7
-python-dotenv>=1.0

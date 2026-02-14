@@ -2,9 +2,12 @@ import os
 import json
 from pathlib import Path
 from dotenv import load_dotenv
-from hotkeys import DEFAULT_HOTKEY_LISTEN, DEFAULT_HOTKEY_RECORD
 
 load_dotenv()
+
+# Hotkey defaults defined here to avoid circular import with hotkeys.py
+DEFAULT_HOTKEY_LISTEN = "Ctrl+Alt+L"
+DEFAULT_HOTKEY_RECORD = "Ctrl+Alt+R"
 
 LEMONFOX_API_KEY = os.getenv("LEMONFOX_API_KEY", "")
 LEMONFOX_LANGUAGE = os.getenv("LEMONFOX_LANGUAGE", "english")
