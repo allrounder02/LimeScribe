@@ -75,6 +75,10 @@ def main():
         settings,
         on_profiles_changed=lambda profile_settings: _save_profile_settings(profile_settings),
     )
+    window.attach_ui_settings(
+        settings,
+        on_ui_settings_changed=lambda ui_settings: _save_ui_settings(ui_settings),
+    )
     hotkeys.start()
 
     tray.show()
@@ -129,6 +133,10 @@ def _save_stt_settings(stt_settings: dict):
 
 def _save_profile_settings(profile_settings: dict):
     save_app_settings(profile_settings)
+
+
+def _save_ui_settings(ui_settings: dict):
+    save_app_settings(ui_settings)
 
 
 if __name__ == "__main__":

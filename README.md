@@ -141,23 +141,29 @@ The app starts in the tray and opens the main window.
 - **Edit Output** focuses the transcription field for one-click text editing.
 - In listening mode, each recognized chunk is appended to output so you can copy full running text.
 - The transcription output field is editable so you can adjust wording before copying or using TTS.
+- Drag the divider between tabs and output to resize the transcription panel; size is remembered.
 
 ### Settings tab
-- Split into two pages for cleaner organization:
+- Split into three pages for cleaner organization:
   - **General**: global hotkeys
-  - **Speech**: STT/TTS options and profiles
+  - **Speech**: STT options and profiles
+  - **Voice**: TTS options and voice preset filters
 - View and edit global keyboard shortcuts for:
   - Toggle Listening
   - Toggle Recording
 - View and edit TTS runtime settings:
   - Model
-  - Voice
+  - Voice actor
   - Language
   - Response format
   - Speed
-- View and edit STT runtime settings:
+- Filter voice presets by:
   - Language
+  - Gender
+- View and edit STT runtime settings:
+  - Language (dropdown: English, German, Spanish, Italian, French)
   - Response format
+  - Auto-copy transcription to clipboard (on/off)
 - Manage named profiles (nickname-based presets) for STT/TTS settings:
   - Apply Profile
   - Save as New
@@ -190,6 +196,8 @@ core/
   lemonfox_tts_client.py # LemonFox/OpenAI-compatible TTS API wrapper
   tts_audio_output.py   # Windows WAV playback helpers
   text_output.py        # Clipboard + paste/type helpers
+data/
+  voice_presets.json    # Voice actor presets (language/gender/id)
 ui/
   main_window.py        # Main UI and mode logic
   tray_icon.py          # Tray icon states and menu

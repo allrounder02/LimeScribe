@@ -42,11 +42,13 @@ DEFAULT_SETTINGS = {
     "hotkey_record": DEFAULT_HOTKEY_RECORD,
     "stt_language": LEMONFOX_LANGUAGE,
     "stt_response_format": LEMONFOX_RESPONSE_FORMAT,
+    "auto_copy_transcription": True,
     "tts_model": LEMONFOX_TTS_MODEL,
     "tts_voice": LEMONFOX_TTS_VOICE,
     "tts_language": LEMONFOX_TTS_LANGUAGE,
     "tts_response_format": LEMONFOX_TTS_RESPONSE_FORMAT,
     "tts_speed": str(LEMONFOX_TTS_SPEED),
+    "ui_splitter_sizes": "560,340",
     "active_profile": "Default",
     "profiles": [
         {
@@ -95,6 +97,8 @@ def load_app_settings() -> dict:
                             )
                     if profiles:
                         settings["profiles"] = profiles
+                elif isinstance(DEFAULT_SETTINGS.get(key), bool) and isinstance(value, bool):
+                    settings[key] = value
                 elif isinstance(value, str) and value.strip():
                     settings[key] = value.strip()
     except (json.JSONDecodeError, OSError):
@@ -109,6 +113,8 @@ def save_app_settings(settings: dict):
     for key in DEFAULT_SETTINGS:
         value = settings.get(key)
         if key == "profiles" and isinstance(value, list) and value:
+            payload[key] = value
+        elif isinstance(DEFAULT_SETTINGS.get(key), bool) and isinstance(value, bool):
             payload[key] = value
         elif isinstance(value, str) and value.strip():
             payload[key] = value.strip()
