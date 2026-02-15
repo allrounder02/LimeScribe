@@ -1,4 +1,5 @@
 import io
+import json
 import logging
 from typing import TYPE_CHECKING
 
@@ -36,6 +37,52 @@ class LemonFoxClient:
     def _headers(self):
         return {"Authorization": f"Bearer {self.api_key}"}
 
+    @staticmethod
+    def _looks_like_json(text: str) -> bool:
+        value = (text or "").lstrip()
+        return bool(value) and value[0] in "{["
+
+    @staticmethod
+    def _extract_text_from_payload(payload) -> str:
+        if isinstance(payload, dict):
+            text_value = payload.get("text")
+            if isinstance(text_value, str) and text_value.strip():
+                return text_value.strip()
+            segments = payload.get("segments")
+            if isinstance(segments, list):
+                pieces = []
+                for item in segments:
+                    if not isinstance(item, dict):
+                        continue
+                    seg_text = str(item.get("text", "")).strip()
+                    if seg_text:
+                        pieces.append(seg_text)
+                if pieces:
+                    return " ".join(pieces)
+            return ""
+        if isinstance(payload, list):
+            pieces = []
+            for item in payload:
+                if not isinstance(item, dict):
+                    continue
+                seg_text = str(item.get("text", "")).strip()
+                if seg_text:
+                    pieces.append(seg_text)
+            if pieces:
+                return " ".join(pieces)
+            return ""
+        return ""
+
+    def _extract_text_from_json_response(self, resp: httpx.Response) -> str:
+        try:
+            payload = resp.json()
+        except ValueError as e:
+            raise RuntimeError(f"STT response was expected to be JSON but could not be parsed: {e}") from e
+        text = self._extract_text_from_payload(payload)
+        if text:
+            return text
+        raise RuntimeError("STT response JSON did not contain a usable 'text' field.")
+
     def transcribe_file(self, file_path: str) -> str:
         """Transcribe an audio file from disk."""
         with open(file_path, "rb") as f:
@@ -49,9 +96,10 @@ class LemonFoxClient:
 
     def _send(self, file_obj, filename: str) -> str:
         """Send audio to the LemonFox API and return transcribed text."""
+        requested_format = str(self.response_format or "").strip()
         data = {
             "language": self.language,
-            "response_format": self.response_format,
+            "response_format": requested_format or self.response_format,
         }
         endpoints = [self.api_url]
         if self.fallback_api_url and self.fallback_api_url != self.api_url:
@@ -72,9 +120,23 @@ class LemonFoxClient:
                     files=files,
                 )
                 resp.raise_for_status()
-                if self.response_format == "json":
-                    return resp.json().get("text", "")
-                return resp.text
+                normalized_format = requested_format.lower()
+                if normalized_format == "json":
+                    return self._extract_text_from_json_response(resp)
+                body_text = resp.text
+                if self._looks_like_json(body_text):
+                    try:
+                        payload = json.loads(body_text)
+                    except ValueError:
+                        return body_text
+                    extracted = self._extract_text_from_payload(payload)
+                    if extracted:
+                        logger.warning(
+                            "STT returned JSON while response_format=%s; using extracted text field.",
+                            requested_format,
+                        )
+                        return extracted
+                return body_text
             except httpx.HTTPError as e:
                 logger.warning("STT request failed on %s: %s", endpoint, e)
                 last_error = e
