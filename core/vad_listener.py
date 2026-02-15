@@ -5,7 +5,7 @@ import numpy as np
 import sounddevice as sd
 import webrtcvad
 
-from config import VAD_PAUSE_THRESHOLD, VAD_AGGRESSIVENESS, VAD_MIN_SPEECH_SECONDS
+_VAD_DEFAULTS = {"pause": 1.5, "aggressiveness": 3, "min_speech": 0.5}
 
 
 SAMPLE_RATE = 16000  # webrtcvad requires 8000, 16000, or 32000
@@ -37,9 +37,9 @@ class VADListener:
             min_speech_seconds: minimum detected voiced duration required before emit.
         """
         self.on_speech_chunk = on_speech_chunk
-        self.pause_threshold = pause_threshold or VAD_PAUSE_THRESHOLD
-        vad_level = VAD_AGGRESSIVENESS if vad_aggressiveness is None else vad_aggressiveness
-        min_seconds = VAD_MIN_SPEECH_SECONDS if min_speech_seconds is None else min_speech_seconds
+        self.pause_threshold = pause_threshold if pause_threshold is not None else _VAD_DEFAULTS["pause"]
+        vad_level = _VAD_DEFAULTS["aggressiveness"] if vad_aggressiveness is None else vad_aggressiveness
+        min_seconds = _VAD_DEFAULTS["min_speech"] if min_speech_seconds is None else min_speech_seconds
         vad_level = max(0, min(3, int(vad_level)))
         min_seconds = max(0.0, float(min_seconds))
         self.vad = webrtcvad.Vad(vad_level)

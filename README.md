@@ -1,51 +1,54 @@
-# LimeScribe
+# ZestVoice
 
-LimeScribe is a desktop speech-to-text app for **Windows 11** built with **PyQt6** and the **LemonFox.ai** transcription API.
-
-It supports four workflows:
-- **Listening mode**: always-on microphone listening with VAD (auto-chunks speech on pause)
-- **Recording mode**: manual start/pause/stop recording
-- **File mode**: transcribe audio files from disk
-- **Text-to-Speech mode**: synthesize speech from text via LemonFox-compatible TTS API
-
-The app runs with a system tray icon, global hotkeys, and auto-copies transcription output to clipboard.
+ZestVoice is a speech-to-text and text-to-speech application powered by the **LemonFox.ai** API (Whisper large-v3). It runs as a **Windows 11 desktop app** (PyQt6 GUI with system tray) or as a **headless CLI** for servers, Docker containers, and automation pipelines.
 
 ## Features
 
-- PyQt6 desktop UI with tabs for Listening / Recording / File / Text to Speech / Settings
-- System tray support with status color:
-  - Gray: idle
-  - Red: listening
-  - Red: recording
-- Global hotkeys:
-  - `Ctrl+Alt+L` toggle listening
-  - `Ctrl+Alt+R` toggle recording
-  - Both are configurable in the **Settings** tab
+- **Listening mode** -- always-on microphone with VAD, auto-chunks speech on pause
+- **Recording mode** -- manual start/pause/stop recording
+- **File mode** -- transcribe audio files from disk
+- **Text-to-Speech** -- synthesize speech from text via LemonFox-compatible TTS API
+- **Headless CLI** -- transcribe files and generate TTS without a GUI (`cli.py`)
+- **Docker support** -- containerized headless transcription and TTS
+
+### Desktop (Windows)
+
+- PyQt6 tabbed UI: Listening / Recording / File / Text to Speech / Settings
+- System tray icon with state colors (gray=idle, red=listening/recording)
+- Global hotkeys: `Ctrl+Alt+L` (listen), `Ctrl+Alt+R` (record), configurable in Settings
 - Voice Activity Detection (`webrtcvad`) for pause-based chunking
-- LemonFox API integration for both recorded audio bytes and local files
-- LemonFox/OpenAI-compatible text-to-speech integration (generate, play, save audio)
-- Clipboard output (`pyperclip`) and optional paste helpers (`pyautogui`)
-- Output controls: copy, clear, and minimize to tray
+- Clipboard output and optional paste simulation
+- Profile system for saving/loading STT and TTS presets
+
+### Headless / Docker
+
+- `cli.py` with `listen`, `transcribe`, and `tts` subcommands
+- Zero GUI dependencies -- imports only from `core/`
+- See [TUTORIAL.md](TUTORIAL.md) for setup instructions
 
 ## Requirements
 
-- Windows 11 (recommended runtime platform)
-- Python 3.10+
+### Desktop (Windows)
+
+- Windows 11
+- Python 3.12+
 - LemonFox API key
 - Microphone access
 
-Notes:
-- The project can be edited from WSL2, but GUI/audio/hotkeys need native Windows to run correctly.
-- `.env` is required for API auth and options.
+### Headless / Docker
+
+- Python 3.12+ or Docker
+- LemonFox API key
+- PortAudio (`libportaudio2`) for mic-based modes; file transcription and TTS work without it
 
 ## Installation
 
-1. Clone the repository.
-2. Create and activate a virtual environment.
-3. Install dependencies.
+### Desktop (Windows)
 
 ```bash
+git clone <repo-url> && cd ZestVoice
 python -m venv .venv
+
 # PowerShell
 .\.venv\Scripts\Activate.ps1
 # or CMD
@@ -54,197 +57,166 @@ python -m venv .venv
 pip install -r requirements.txt
 ```
 
+### Headless (Linux / Docker)
+
+```bash
+# Linux
+pip install httpx[http2] sounddevice numpy webrtcvad python-dotenv
+
+# Docker
+docker build -t limescribe .
+```
+
 ## Configuration
 
-Create a `.env` file from `.env.example` and set your values:
+Copy `.env.example` to `.env` and set your API key:
 
 ```env
 LEMONFOX_API_KEY=your_api_key_here
-LEMONFOX_LANGUAGE=english
-LEMONFOX_RESPONSE_FORMAT=json
-VAD_PAUSE_THRESHOLD=1.5
-VAD_AGGRESSIVENESS=3
-VAD_MIN_SPEECH_SECONDS=0.5
-LEMONFOX_API_URL=https://api.lemonfox.ai/v1/audio/transcriptions
-LEMONFOX_API_FALLBACK_URL=https://transcribe.whisperapi.com
-LEMONFOX_TTS_URL=https://api.lemonfox.ai/v1/audio/speech
-LEMONFOX_TTS_FALLBACK_URL=
-LEMONFOX_TTS_MODEL=tts-1
-LEMONFOX_TTS_VOICE=heart
-LEMONFOX_TTS_LANGUAGE=en-us
-LEMONFOX_TTS_RESPONSE_FORMAT=wav
-LEMONFOX_TTS_SPEED=1.0
 ```
 
-Environment variables:
-- `LEMONFOX_API_KEY`: required API key
-- `LEMONFOX_LANGUAGE`: transcription language (default `english`)
-- `LEMONFOX_RESPONSE_FORMAT`: API response format (default `json`)
-- `VAD_PAUSE_THRESHOLD`: seconds of silence before chunk submission in Listening mode
-- `VAD_AGGRESSIVENESS`: VAD strictness `0-3` (higher is stricter, default `3`)
-- `VAD_MIN_SPEECH_SECONDS`: minimum voiced speech before sending a chunk (default `0.5`)
-- `LEMONFOX_API_URL`: primary transcription endpoint
-- `LEMONFOX_API_FALLBACK_URL`: fallback endpoint if primary is unreachable
-- `LEMONFOX_TTS_URL`: primary TTS endpoint
-- `LEMONFOX_TTS_FALLBACK_URL`: optional fallback TTS endpoint
-- `LEMONFOX_TTS_MODEL`: TTS model name (default `tts-1`)
-- `LEMONFOX_TTS_VOICE`: TTS voice name (default `heart`)
-- `LEMONFOX_TTS_LANGUAGE`: language code for synthesis (default `en-us`)
-- `LEMONFOX_TTS_RESPONSE_FORMAT`: output format (default `wav`)
-- `LEMONFOX_TTS_SPEED`: voice speed multiplier (default `1.0`)
-- `LOG_LEVEL`: `DEBUG`, `INFO`, `WARNING`, `ERROR` (default `INFO`)
-- `LOG_FILE`: optional log file path (if empty, logs go to terminal only)
+All configuration options:
 
-## Run
+| Variable | Default | Description |
+|---|---|---|
+| `LEMONFOX_API_KEY` | *(required)* | LemonFox API key |
+| `LEMONFOX_LANGUAGE` | `english` | Transcription language |
+| `LEMONFOX_RESPONSE_FORMAT` | `json` | API response format |
+| `VAD_PAUSE_THRESHOLD` | `1.5` | Seconds of silence before chunk submission |
+| `VAD_AGGRESSIVENESS` | `3` | VAD strictness 0-3 (higher = stricter) |
+| `VAD_MIN_SPEECH_SECONDS` | `0.5` | Minimum voiced duration before sending |
+| `LEMONFOX_API_URL` | `https://api.lemonfox.ai/v1/audio/transcriptions` | Primary STT endpoint |
+| `LEMONFOX_API_FALLBACK_URL` | `https://transcribe.whisperapi.com` | Fallback STT endpoint |
+| `LEMONFOX_TTS_URL` | `https://api.lemonfox.ai/v1/audio/speech` | Primary TTS endpoint |
+| `LEMONFOX_TTS_FALLBACK_URL` | *(empty)* | Optional fallback TTS endpoint |
+| `LEMONFOX_TTS_MODEL` | `tts-1` | TTS model name |
+| `LEMONFOX_TTS_VOICE` | `heart` | TTS voice name |
+| `LEMONFOX_TTS_LANGUAGE` | `en-us` | TTS language code |
+| `LEMONFOX_TTS_RESPONSE_FORMAT` | `wav` | TTS output format |
+| `LEMONFOX_TTS_SPEED` | `1.0` | TTS speed multiplier |
+| `LOG_LEVEL` | `INFO` | Logging level (DEBUG/INFO/WARNING/ERROR) |
+| `LOG_FILE` | *(empty)* | Optional log file path |
+
+## Usage
+
+### Desktop GUI
 
 ```bash
 python app.py
 ```
 
-The app starts in the tray and opens the main window.
+The app starts in the system tray and opens the main window.
 
-## Usage
+**Listening tab** -- Click **Start Listening** (or `Ctrl+Alt+L`). Speak normally; the app detects pauses and sends chunks for transcription. Results are appended to the output area and copied to clipboard.
 
-### Listening tab
-- Click **Start Listening** (or press `Ctrl+Alt+L`).
-- Speak normally; the app detects pauses and sends chunks for transcription.
-- Transcribed chunks are appended to output and copied to clipboard.
+**Recording tab** -- Click **Start**, then **Pause/Resume** as needed. Click **Stop** to transcribe. Result appears in output and is copied to clipboard.
 
-### Recording tab
-- Click **Start**, then **Pause/Resume** as needed.
-- Click **Stop** to transcribe the captured audio.
-- Result appears in output and is copied to clipboard.
+**File tab** -- Click **Select File**, choose an audio file (`.mp3`, `.wav`, `.flac`, `.m4a`, `.ogg`), then click **Transcribe**.
 
-### File tab
-- Click **Select File** and choose an audio file.
-- Supported picker filter: `.mp3`, `.wav`, `.flac`, `.m4a`, `.ogg`
-- Click **Transcribe** to process and display text.
+**Text to Speech tab** -- Enter text or click **Use Transcription Output**. Click **Generate & Play** to synthesize and hear audio. Click **Save Last Audio** to export.
 
-### Text to Speech tab
-- Enter text directly (field is editable), or click **Use Transcription Output**.
-- Click **Generate & Play** to synthesize and play audio.
-- Click **Save Last Audio** to export the generated WAV file.
+**Settings tab** -- Three sub-pages: General (hotkeys), Speech (STT options + profiles), Voice (TTS options + voice presets). Changes apply immediately without restarting.
 
-### Tray menu
-- Show Window
-- Start Listening
-- Start Recording
-- Quit
+**Tray menu** -- Show Window, Start Listening, Start Recording, Quit.
 
-### Window behavior
-- Click window `X` to fully quit the app (terminal process ends).
-- Use **Minimize to Tray** to keep the app running in the background tray.
+**Window behavior** -- Click X to quit. Use **Minimize to Tray** to keep running in the background.
 
-### Output area controls
-- **Copy to Clipboard** copies the current output text.
-- **Clear Output** clears all transcription text.
-- **Edit Output** focuses the transcription field for one-click text editing.
-- In listening mode, each recognized chunk is appended to output so you can copy full running text.
-- The transcription output field is editable so you can adjust wording before copying or using TTS.
-- Drag the divider between tabs and output to resize the transcription panel; size is remembered.
-
-### Settings tab
-- Split into three pages for cleaner organization:
-  - **General**: global hotkeys
-  - **Speech**: STT options and profiles
-  - **Voice**: TTS options and voice preset filters
-- View and edit global keyboard shortcuts for:
-  - Toggle Listening
-  - Toggle Recording
-- View and edit TTS runtime settings:
-  - Model
-  - Voice actor
-  - Language
-  - Response format
-  - Speed
-- Filter voice presets by:
-  - Language
-  - Gender
-- View and edit STT runtime settings:
-  - Language (dropdown: English, German, Spanish, Italian, French)
-  - Response format
-  - Auto-copy transcription to clipboard (on/off)
-- Manage named profiles (nickname-based presets) for STT/TTS settings:
-  - Apply Profile
-  - Save as New
-  - Update Current
-  - Delete
-- Save changes without restarting the app
-- Restore hotkey/STT/TTS defaults
-
-## Optional CLI Smoke Test
-
-A basic mic-to-API command line test is included:
+### Headless CLI
 
 ```bash
-python cli_test.py
+# Transcribe a file
+python cli.py transcribe recording.wav
+
+# Text-to-speech
+python cli.py tts "Hello world" -o hello.wav
+
+# VAD listening (needs microphone)
+python cli.py listen
 ```
 
-It records until Enter is pressed, then prints transcription.
+### Docker
+
+```bash
+# Transcribe a file
+docker run -v /path/to/.env:/app/.env -v /path/to/audio:/data \
+    limescribe transcribe /data/recording.wav
+
+# Text-to-speech
+docker run -v /path/to/.env:/app/.env -v /path/to/output:/data \
+    limescribe tts "Hello world" -o /data/hello.wav
+```
+
+See [TUTORIAL.md](TUTORIAL.md) for detailed headless/Docker setup instructions.
 
 ## Project Structure
 
-```text
-app.py                  # App entrypoint (Qt app + tray + hotkeys)
-config.py               # .env settings loader
-hotkeys.py              # Global hotkey registration
-cli_test.py             # CLI smoke test
-core/
-  audio_recorder.py     # Mic recording to WAV bytes
-  vad_listener.py       # Continuous listening + VAD chunking
-  lemonfox_client.py    # LemonFox transcription API wrapper
-  lemonfox_tts_client.py # LemonFox/OpenAI-compatible TTS API wrapper
-  tts_audio_output.py   # Windows WAV playback helpers
-  text_output.py        # Clipboard + paste/type helpers
+```
+app.py                      # Desktop GUI entry point
+cli.py                      # Headless CLI entry point
+config.py                   # Settings loader (.env + settings.json)
+hotkeys.py                  # Global hotkey registration (pynput)
+Dockerfile                  # Headless container build
+
+core/                       # Pure Python, no PyQt6 dependency
+  app_config.py             # Injectable config dataclass
+  http_client.py            # Shared httpx client with connection pooling
+  transcription_service.py  # STT orchestration (VAD, recording, file)
+  tts_service.py            # TTS orchestration
+  lemonfox_client.py        # LemonFox STT API wrapper
+  lemonfox_tts_client.py    # LemonFox TTS API wrapper
+  audio_recorder.py         # Mic recording to WAV bytes
+  vad_listener.py           # Continuous listening + VAD chunking
+  audio_playback.py         # Cross-platform audio playback (sounddevice)
+  text_output.py            # Clipboard + paste helpers (lazy imports)
+
+ui/                         # PyQt6 widgets
+  main_window.py            # Main window + tab coordination
+  settings_panel.py         # Settings, profiles, voice presets
+  tts_panel.py              # TTS input widget
+  tray_icon.py              # System tray icon and menu
+
 data/
-  voice_presets.json    # Voice actor presets (language/gender/id)
-ui/
-  main_window.py        # Main UI and mode logic
-  tray_icon.py          # Tray icon states and menu
+  voice_presets.json        # Voice actor presets (language/gender/id)
+```
+
+### Architecture
+
+The `core/` layer is a standalone Python SDK with no GUI dependencies. It uses `httpx` with HTTP/2 and connection pooling for efficient API calls (important in VAD mode where each speech chunk is a separate request). The `ui/` layer wraps services with PyQt6 signals for thread-safe GUI updates. The `cli.py` entry point uses `core/` directly.
+
+```
+               app.py (GUI)          cli.py (headless)
+                   |                       |
+                   v                       v
+              ui/ (PyQt6)         (no GUI needed)
+                   |                       |
+                   +-------+-------+-------+
+                           |
+                        core/ (pure Python)
+                           |
+                    httpx -> LemonFox API
 ```
 
 ## Troubleshooting
 
-- `401 Unauthorized`: check `LEMONFOX_API_KEY` in `.env`.
-- No mic input: verify Windows microphone permissions and default input device.
-- Hotkeys not firing: run app in native Windows desktop session (not headless/WSL GUI).
-- Clipboard/paste issues: ensure focused target app accepts `Ctrl+V`.
-- Repeated idle text (for example repeated "Thank you"):
-  - Set `VAD_AGGRESSIVENESS=3` in `.env`.
-  - Set `VAD_MIN_SPEECH_SECONDS=0.5` in `.env`.
-  - If it still happens, increase `VAD_MIN_SPEECH_SECONDS` to `0.7`.
+- **401 Unauthorized**: check `LEMONFOX_API_KEY` in `.env`
+- **No mic input**: verify microphone permissions and default input device
+- **Hotkeys not firing**: run in a native Windows desktop session (not WSL)
+- **Clipboard/paste issues**: ensure focused target app accepts `Ctrl+V`
+- **Repeated idle text** (e.g. "Thank you" from silence): set `VAD_AGGRESSIVENESS=3` and `VAD_MIN_SPEECH_SECONDS=0.5` (or higher)
+- **PortAudio not found**: install `libportaudio2` (Linux) or use a Windows Python environment
 
 ### Verbose logging
 
-- To run in verbose mode, set in `.env`:
-  - `LOG_LEVEL=DEBUG`
-  - Optional: `LOG_FILE=limescribe.log`
-- Restart `python app.py`.
-- You will see detailed STT/TTS request attempts and failure reasons.
-
-## Audio Selection (Windows)
-
-- Use a native Windows Python environment, not WSL, for mic and playback.
-- In Windows Settings, confirm the correct default microphone is selected.
-- In the **File** tab, select one of the supported audio formats (`.mp3`, `.wav`, `.flac`, `.m4a`, `.ogg`).
-- In **Text to Speech**, keep `LEMONFOX_TTS_RESPONSE_FORMAT=wav` if you want in-app playback.
-
-## API and Model References
-
-- LemonFox Speech-to-Text API docs: `https://www.lemonfox.ai/apis/speech-to-text`
-- LemonFox docs home: `https://www.lemonfox.ai/docs`
-- OpenAI audio API reference (compatible request shape): `https://platform.openai.com/docs/api-reference/audio`
-
-## Next Quality Steps
-
-- Add `pytest` tests for API clients (mocked HTTP), VAD chunk filtering, and hotkey parsing.
-- Add a `samples/` folder with short redacted audio clips for file-mode smoke testing.
-- Add a short regression checklist for Windows (`mic`, `tray`, `hotkeys`, `TTS playback`).
+Set in `.env`:
+```env
+LOG_LEVEL=DEBUG
+LOG_FILE=limescribe.log
+```
 
 ## Security
 
-- Do not commit `.env`.
-- Rotate API keys if they are exposed.
+- Do not commit `.env` -- it is gitignored
+- Rotate API keys if exposed
 
 ## License
 
