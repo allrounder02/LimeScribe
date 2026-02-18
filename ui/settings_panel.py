@@ -38,6 +38,8 @@ VAD_NOISE_MIN = 0
 VAD_NOISE_MAX = 100
 VAD_MIN_SPEECH_FLOOR = 0.30
 VAD_MIN_SPEECH_CEIL = 1.20
+TTS_SPEED_MIN = 0.25
+TTS_SPEED_MAX = 4.00
 VAD_NOISE_DEFAULT = int(
     round(
         (
@@ -128,9 +130,18 @@ class SettingsPanel(QWidget):
         self._set_voice_combo_value(voice)
         self._set_combo_value(self.input_tts_language, language)
         self._set_combo_value(self.input_tts_response_format, response_format)
-        self.input_tts_speed.setText(speed)
+        self.input_tts_speed.setValue(self._coerce_tts_speed(speed))
         self._updating_tts_controls = False
         self._emit_tts_settings(show_status=False, silent=True)
+
+    def set_tts_speed_value(self, speed: float, emit: bool = False):
+        if not hasattr(self, "input_tts_speed"):
+            return
+        self._updating_tts_controls = True
+        self.input_tts_speed.setValue(self._coerce_tts_speed(speed))
+        self._updating_tts_controls = False
+        if emit:
+            self._emit_tts_settings(show_status=False, silent=True)
 
     def apply_ui_settings(self, dark_mode: bool):
         if not hasattr(self, "chk_dark_mode"):
@@ -193,7 +204,7 @@ class SettingsPanel(QWidget):
     # ── Collect settings from UI ───────────────────────────────────
 
     def collect_stt_settings(self) -> dict:
-        language = self.input_stt_language.currentText().strip()
+        language = self.input_stt_language.currentText().strip().lower()
         response_format = self.input_stt_response_format.currentText().strip().lower()
         if not language or not response_format:
             raise ValueError("STT language and response format are required.")
@@ -217,11 +228,10 @@ class SettingsPanel(QWidget):
         voice = self._current_voice_value()
         language = self.input_tts_language.currentText().strip()
         response_format = self.input_tts_response_format.currentText().strip().lower()
-        speed_raw = self.input_tts_speed.text().strip()
 
         if not model or not voice or not language or not response_format:
             raise ValueError("Model, voice, language, and response format are required.")
-        speed = float(speed_raw)
+        speed = float(self.input_tts_speed.value())
         if speed <= 0:
             raise ValueError("Speed must be greater than 0.")
 
@@ -230,7 +240,7 @@ class SettingsPanel(QWidget):
             "tts_voice": voice,
             "tts_language": language,
             "tts_response_format": response_format,
-            "tts_speed": str(speed),
+            "tts_speed": self._format_tts_speed(speed),
         }
 
     # ── Page builders ──────────────────────────────────────────────
@@ -295,6 +305,7 @@ class SettingsPanel(QWidget):
         self.input_stt_language.setEditable(True)
         self.input_stt_language.addItems(STT_LANGUAGE_PRESETS)
         self.input_stt_language.setCurrentText(LEMONFOX_LANGUAGE)
+        self.input_stt_language.currentTextChanged.connect(lambda _v: self._schedule_stt_auto_apply())
         stt_lang_row.addWidget(self.input_stt_language)
         layout.addLayout(stt_lang_row)
 
@@ -304,12 +315,19 @@ class SettingsPanel(QWidget):
         self.input_stt_response_format.setEditable(True)
         self.input_stt_response_format.addItems(STT_RESPONSE_FORMAT_PRESETS)
         self.input_stt_response_format.setCurrentText(LEMONFOX_RESPONSE_FORMAT)
+        self.input_stt_response_format.currentTextChanged.connect(lambda _v: self._schedule_stt_auto_apply())
         stt_fmt_row.addWidget(self.input_stt_response_format)
         layout.addLayout(stt_fmt_row)
 
         layout.addWidget(QLabel(""))
         layout.addWidget(QLabel("Listening (VAD)"))
         layout.addWidget(QLabel("Use the noise slider for auto-tuning, then fine-tune manually if needed."))
+        vad_quick_guide = QLabel(
+            "Quick guide: lower slider = quieter environment (less strict); higher slider = noisier environment "
+            "(more strict noise filtering)."
+        )
+        vad_quick_guide.setWordWrap(True)
+        layout.addWidget(vad_quick_guide)
 
         noise_row = QHBoxLayout()
         noise_row.addWidget(QLabel("Noise Auto-Tune:"))
@@ -319,6 +337,9 @@ class SettingsPanel(QWidget):
         self.slider_vad_noise.setPageStep(5)
         self.slider_vad_noise.setTickPosition(QSlider.TickPosition.TicksBelow)
         self.slider_vad_noise.setTickInterval(10)
+        self.slider_vad_noise.setToolTip(
+            "Lower = quieter room and less strict filtering. Higher = noisier room and stricter filtering."
+        )
         self.slider_vad_noise.valueChanged.connect(self._on_noise_slider_changed)
         noise_row.addWidget(self.slider_vad_noise, 1)
         self.lbl_vad_noise_value = QLabel("0")
@@ -330,9 +351,17 @@ class SettingsPanel(QWidget):
         self.input_vad_aggressiveness = QSpinBox()
         self.input_vad_aggressiveness.setRange(0, 3)
         self.input_vad_aggressiveness.setValue(VAD_AGGRESSIVENESS)
+        self.input_vad_aggressiveness.setToolTip(
+            "Higher aggressiveness removes more background noise, but can miss soft/quiet speech."
+        )
         self.input_vad_aggressiveness.valueChanged.connect(self._on_manual_vad_changed)
         vad_aggr_row.addWidget(self.input_vad_aggressiveness)
         layout.addLayout(vad_aggr_row)
+        vad_aggr_hint = QLabel(
+            "Hint: higher aggressiveness = stronger noise rejection; lower aggressiveness = catches softer speech."
+        )
+        vad_aggr_hint.setWordWrap(True)
+        layout.addWidget(vad_aggr_hint)
 
         vad_min_row = QHBoxLayout()
         vad_min_row.addWidget(QLabel("VAD Min Speech Seconds:"))
@@ -341,9 +370,17 @@ class SettingsPanel(QWidget):
         self.input_vad_min_speech_seconds.setSingleStep(0.05)
         self.input_vad_min_speech_seconds.setDecimals(2)
         self.input_vad_min_speech_seconds.setValue(VAD_MIN_SPEECH_SECONDS)
+        self.input_vad_min_speech_seconds.setToolTip(
+            "Lower values send short phrases faster. Higher values wait for longer speech and reduce tiny fragments."
+        )
         self.input_vad_min_speech_seconds.valueChanged.connect(self._on_manual_vad_changed)
         vad_min_row.addWidget(self.input_vad_min_speech_seconds)
         layout.addLayout(vad_min_row)
+        vad_min_hint = QLabel(
+            "Hint: lower seconds = faster response; higher seconds = fewer accidental short transcriptions."
+        )
+        vad_min_hint.setWordWrap(True)
+        layout.addWidget(vad_min_hint)
 
         self.lbl_vad_summary = QLabel("")
         layout.addWidget(self.lbl_vad_summary)
@@ -482,8 +519,12 @@ class SettingsPanel(QWidget):
 
         tts_speed_row = QHBoxLayout()
         tts_speed_row.addWidget(QLabel("Speed:"))
-        self.input_tts_speed = QLineEdit(str(LEMONFOX_TTS_SPEED))
-        self.input_tts_speed.textChanged.connect(lambda _v: self._schedule_tts_auto_apply())
+        self.input_tts_speed = QDoubleSpinBox()
+        self.input_tts_speed.setDecimals(2)
+        self.input_tts_speed.setRange(TTS_SPEED_MIN, TTS_SPEED_MAX)
+        self.input_tts_speed.setSingleStep(0.05)
+        self.input_tts_speed.setValue(self._coerce_tts_speed(LEMONFOX_TTS_SPEED))
+        self.input_tts_speed.valueChanged.connect(lambda _v: self._schedule_tts_auto_apply())
         tts_speed_row.addWidget(self.input_tts_speed)
         layout.addLayout(tts_speed_row)
 
@@ -500,29 +541,26 @@ class SettingsPanel(QWidget):
 
         layout.addWidget(QLabel(""))
         layout.addWidget(QLabel("TTS Quick Profiles"))
-        layout.addWidget(QLabel("Save voice/runtime combinations for quick switching in the TTS tab."))
+        layout.addWidget(QLabel("Selecting a profile applies it immediately to voice filters and TTS runtime settings."))
 
         tts_profile_row = QHBoxLayout()
         tts_profile_row.addWidget(QLabel("TTS Profile:"))
         self.combo_tts_profiles = QComboBox()
         self.combo_tts_profiles.setEditable(False)
+        self.combo_tts_profiles.currentTextChanged.connect(self._on_tts_profile_combo_changed)
         tts_profile_row.addWidget(self.combo_tts_profiles)
         layout.addLayout(tts_profile_row)
 
         tts_profile_btn_row = QHBoxLayout()
-        self.btn_tts_profile_apply = QPushButton("Apply Profile")
         self.btn_tts_profile_save_new = QPushButton("Save as New")
         self.btn_tts_profile_update = QPushButton("Update Current")
         self.btn_tts_profile_delete = QPushButton("Delete")
-        self.btn_tts_profile_apply.setIcon(ui_icon(self, "settings_profile_apply"))
         self.btn_tts_profile_save_new.setIcon(ui_icon(self, "settings_profile_save_new"))
         self.btn_tts_profile_update.setIcon(ui_icon(self, "settings_profile_update"))
         self.btn_tts_profile_delete.setIcon(ui_icon(self, "settings_profile_delete"))
-        self.btn_tts_profile_apply.clicked.connect(self._apply_selected_tts_profile)
         self.btn_tts_profile_save_new.clicked.connect(self._save_tts_profile_as_new)
         self.btn_tts_profile_update.clicked.connect(self._update_selected_tts_profile)
         self.btn_tts_profile_delete.clicked.connect(self._delete_selected_tts_profile)
-        tts_profile_btn_row.addWidget(self.btn_tts_profile_apply)
         tts_profile_btn_row.addWidget(self.btn_tts_profile_save_new)
         tts_profile_btn_row.addWidget(self.btn_tts_profile_update)
         tts_profile_btn_row.addWidget(self.btn_tts_profile_delete)
@@ -675,7 +713,7 @@ class SettingsPanel(QWidget):
         self._set_voice_combo_value(LEMONFOX_TTS_VOICE)
         self._set_combo_value(self.input_tts_language, LEMONFOX_TTS_LANGUAGE)
         self._set_combo_value(self.input_tts_response_format, LEMONFOX_TTS_RESPONSE_FORMAT)
-        self.input_tts_speed.setText(str(LEMONFOX_TTS_SPEED))
+        self.input_tts_speed.setValue(self._coerce_tts_speed(LEMONFOX_TTS_SPEED))
         self._updating_tts_controls = False
         self._emit_tts_settings()
 
@@ -697,7 +735,7 @@ class SettingsPanel(QWidget):
             "tts_voice": self._current_voice_value(),
             "tts_language": self.input_tts_language.currentText().strip(),
             "tts_response_format": self.input_tts_response_format.currentText().strip().lower(),
-            "tts_speed": self.input_tts_speed.text().strip(),
+            "tts_speed": self._format_tts_speed(self.input_tts_speed.value()),
         }
 
     def _build_profile(self, name: str) -> dict:
@@ -764,7 +802,7 @@ class SettingsPanel(QWidget):
             self.input_tts_response_format,
             profile.get("tts_response_format", LEMONFOX_TTS_RESPONSE_FORMAT),
         )
-        self.input_tts_speed.setText(str(profile.get("tts_speed", LEMONFOX_TTS_SPEED)))
+        self.input_tts_speed.setValue(self._coerce_tts_speed(profile.get("tts_speed", LEMONFOX_TTS_SPEED)))
         self._updating_tts_controls = False
         self._emit_stt_settings(show_status=False)
         self._emit_tts_settings(show_status=False, silent=True)
@@ -879,7 +917,7 @@ class SettingsPanel(QWidget):
             self.input_tts_response_format,
             profile.get("tts_response_format", LEMONFOX_TTS_RESPONSE_FORMAT),
         )
-        self.input_tts_speed.setText(str(profile.get("tts_speed", LEMONFOX_TTS_SPEED)))
+        self.input_tts_speed.setValue(self._coerce_tts_speed(profile.get("tts_speed", LEMONFOX_TTS_SPEED)))
         self._updating_tts_controls = False
         if emit_tts:
             self._emit_tts_settings(show_status=False, silent=True)
@@ -891,6 +929,9 @@ class SettingsPanel(QWidget):
             return
         self._apply_tts_profile_to_ui(profile, emit_tts=True)
         self._emit_tts_profiles_changed()
+
+    def _on_tts_profile_combo_changed(self, _name: str):
+        self._apply_selected_tts_profile()
 
     def _save_tts_profile_as_new(self):
         name, ok = QInputDialog.getText(self, "Save TTS Profile", "TTS profile nickname:")
@@ -905,7 +946,6 @@ class SettingsPanel(QWidget):
             self._tts_profiles.append(self._build_tts_profile(name))
             self._refresh_tts_profiles_combo()
             self._set_combo_value(self.combo_tts_profiles, name)
-            self._emit_tts_profiles_changed()
         except Exception as e:
             QMessageBox.warning(self, "TTS Profile Error", str(e))
 
@@ -944,22 +984,46 @@ class SettingsPanel(QWidget):
     def _set_combo_value(combo: QComboBox, value: str):
         combo.setCurrentText(str(value or ""))
 
+    @staticmethod
+    def _format_tts_speed(value: float) -> str:
+        text = f"{float(value):.2f}".rstrip("0").rstrip(".")
+        return text if "." in text else f"{text}.0"
+
+    @staticmethod
+    def _coerce_tts_speed(value) -> float:
+        if isinstance(value, (int, float)):
+            speed = float(value)
+        else:
+            raw = str(value or "").strip().replace(",", ".")
+            try:
+                speed = float(raw)
+            except (TypeError, ValueError):
+                speed = float(LEMONFOX_TTS_SPEED)
+        if speed <= 0:
+            speed = float(LEMONFOX_TTS_SPEED)
+        return max(TTS_SPEED_MIN, min(TTS_SPEED_MAX, speed))
+
     def _current_voice_value(self) -> str:
         typed = self.input_tts_voice.currentText().strip()
-        if typed:
-            return typed
         idx = self.input_tts_voice.currentIndex()
         if idx >= 0:
             data = self.input_tts_voice.itemData(idx)
-            if isinstance(data, str) and data.strip():
+            label = self.input_tts_voice.itemText(idx).strip()
+            if isinstance(data, str) and data.strip() and (not typed or typed == label):
                 return data.strip()
+        if typed:
+            return typed
         return ""
 
     def _set_voice_combo_value(self, voice_id: str):
         voice_id = (voice_id or "").strip()
         for i in range(self.input_tts_voice.count()):
             data = self.input_tts_voice.itemData(i)
-            if isinstance(data, str) and data == voice_id:
+            label = self.input_tts_voice.itemText(i).strip()
+            if isinstance(data, str) and data.lower() == voice_id.lower():
+                self.input_tts_voice.setCurrentIndex(i)
+                return
+            if label and label.lower() == voice_id.lower():
                 self.input_tts_voice.setCurrentIndex(i)
                 return
         self.input_tts_voice.setEditText(voice_id)

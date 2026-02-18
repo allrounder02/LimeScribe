@@ -36,6 +36,16 @@ LEMONFOX_TTS_VOICE = os.getenv("LEMONFOX_TTS_VOICE", "heart")
 LEMONFOX_TTS_LANGUAGE = os.getenv("LEMONFOX_TTS_LANGUAGE", "en-us")
 LEMONFOX_TTS_RESPONSE_FORMAT = os.getenv("LEMONFOX_TTS_RESPONSE_FORMAT", "wav")
 LEMONFOX_TTS_SPEED = float(os.getenv("LEMONFOX_TTS_SPEED", "1.0"))
+LEMONFOX_CHAT_URL = os.getenv(
+    "LEMONFOX_CHAT_URL",
+    "https://api.lemonfox.ai/v1/chat/completions",
+)
+LEMONFOX_CHAT_FALLBACK_URL = os.getenv(
+    "LEMONFOX_CHAT_FALLBACK_URL",
+    "",
+)
+LEMONFOX_CHAT_MODEL = os.getenv("LEMONFOX_CHAT_MODEL", "llama-8b-chat")
+LEMONFOX_CHAT_SYSTEM_PROMPT = os.getenv("LEMONFOX_CHAT_SYSTEM_PROMPT", "You are a helpful assistant.")
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").upper()
 LOG_FILE = os.getenv("LOG_FILE", "").strip()
 
@@ -51,6 +61,7 @@ def _estimate_vad_noise_level(vad_aggressiveness: int, vad_min_speech_seconds: f
 
 _DEFAULT_VAD_NOISE_LEVEL = _estimate_vad_noise_level(VAD_AGGRESSIVENESS, VAD_MIN_SPEECH_SECONDS)
 _DEFAULT_TTS_PROFILE_NAME = "Default Voice"
+_OUTPUT_HISTORY_LIMIT = 3
 
 DEFAULT_SETTINGS = {
     "hotkey_listen": DEFAULT_HOTKEY_LISTEN,
@@ -69,6 +80,11 @@ DEFAULT_SETTINGS = {
     "tts_language": LEMONFOX_TTS_LANGUAGE,
     "tts_response_format": LEMONFOX_TTS_RESPONSE_FORMAT,
     "tts_speed": str(LEMONFOX_TTS_SPEED),
+    "tts_optimize_long_text": True,
+    "tts_optimize_threshold_chars": 240,
+    "chat_model": LEMONFOX_CHAT_MODEL,
+    "chat_system_prompt": LEMONFOX_CHAT_SYSTEM_PROMPT,
+    "chat_include_history": True,
     "active_tts_profile": _DEFAULT_TTS_PROFILE_NAME,
     "tts_profiles": [
         {
@@ -82,6 +98,7 @@ DEFAULT_SETTINGS = {
             "tts_speed": str(LEMONFOX_TTS_SPEED),
         }
     ],
+    "output_history": [],
     "dark_mode": False,
     "ui_splitter_sizes": "560,340",
     "active_profile": "Default",
@@ -117,10 +134,40 @@ def _coerce_float(value, default: float) -> float:
         return float(default)
 
 
+def _sanitize_output_history(value) -> list[dict]:
+    entries = []
+    if not isinstance(value, list):
+        return entries
+    for item in value:
+        if not isinstance(item, dict):
+            continue
+        text = str(item.get("text", "")).strip()
+        if not text:
+            continue
+        name = str(item.get("name", "")).strip()
+        created_at = str(item.get("created_at", "")).strip()
+        if not name:
+            preview = " ".join(text.split())
+            name = preview[:48].strip()
+            if len(preview) > 48:
+                name = f"{name}..."
+        entries.append(
+            {
+                "name": name,
+                "text": text,
+                "created_at": created_at,
+            }
+        )
+        if len(entries) >= _OUTPUT_HISTORY_LIMIT:
+            break
+    return entries
+
+
 def load_app_settings() -> dict:
     settings = DEFAULT_SETTINGS.copy()
     settings["profiles"] = [dict(p) for p in DEFAULT_SETTINGS["profiles"]]
     settings["tts_profiles"] = [dict(p) for p in DEFAULT_SETTINGS["tts_profiles"]]
+    settings["output_history"] = [dict(item) for item in DEFAULT_SETTINGS["output_history"]]
     if not _SETTINGS_PATH.exists():
         return settings
     try:
@@ -185,6 +232,8 @@ def load_app_settings() -> dict:
                             )
                     if tts_profiles:
                         settings["tts_profiles"] = tts_profiles
+                elif key == "output_history" and isinstance(value, list):
+                    settings["output_history"] = _sanitize_output_history(value)
                 elif isinstance(DEFAULT_SETTINGS.get(key), bool) and isinstance(value, bool):
                     settings[key] = value
                 elif isinstance(DEFAULT_SETTINGS.get(key), int) and not isinstance(DEFAULT_SETTINGS.get(key), bool):
@@ -208,6 +257,8 @@ def save_app_settings(settings: dict):
         value = settings.get(key)
         if key in {"profiles", "tts_profiles"} and isinstance(value, list) and value:
             payload[key] = value
+        elif key == "output_history" and isinstance(value, list):
+            payload[key] = _sanitize_output_history(value)
         elif isinstance(DEFAULT_SETTINGS.get(key), bool) and isinstance(value, bool):
             payload[key] = value
         elif isinstance(DEFAULT_SETTINGS.get(key), int) and not isinstance(DEFAULT_SETTINGS.get(key), bool):

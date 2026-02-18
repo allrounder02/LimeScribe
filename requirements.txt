@@ -2,11 +2,11 @@
 httpx[http2]>=0.27
 sounddevice>=0.4
 numpy>=1.24
-webrtcvad-wheels>=2.0.14; platform_system == "Windows"
-webrtcvad>=2.0.10; platform_system != "Windows"
+webrtcvad-wheels>=2.0.14; platform_system == "Windows" or platform_system == "Darwin"
+webrtcvad>=2.0.10; platform_system != "Windows" and platform_system != "Darwin"
 python-dotenv>=1.0
 
-# GUI-only (needed for Windows desktop app, not required for headless/Docker)
+# GUI-only (needed for desktop app, not required for headless/Docker)
 PyQt6>=6.6
 pyperclip>=1.8
 pyautogui>=0.9

@@ -1,6 +1,7 @@
 """Clipboard and paste operations — degrades gracefully in headless mode."""
 
 import logging
+import sys
 import time
 
 logger = logging.getLogger(__name__)
@@ -43,14 +44,14 @@ def copy_to_clipboard(text: str):
 
 
 def paste_to_active_window(text: str):
-    """Copy text to clipboard then simulate Ctrl+V in the currently focused window."""
+    """Copy text to clipboard then simulate platform paste shortcut in the focused window."""
     pc = _get_pyperclip()
     pg = _get_pyautogui()
     if not pc or not pg:
         raise RuntimeError("paste_to_active_window requires a display (not available in headless mode)")
     pc.copy(text)
     time.sleep(0.05)
-    pg.hotkey("ctrl", "v")
+    pg.hotkey(*_paste_hotkey_keys())
 
 
 def type_to_active_window(text: str, interval: float = 0.02):
@@ -59,3 +60,10 @@ def type_to_active_window(text: str, interval: float = 0.02):
     if not pg:
         raise RuntimeError("type_to_active_window requires a display (not available in headless mode)")
     pg.typewrite(text, interval=interval)
+
+
+def _paste_hotkey_keys() -> tuple[str, str]:
+    """Return the paste shortcut for the current platform."""
+    if sys.platform == "darwin":
+        return ("command", "v")
+    return ("ctrl", "v")

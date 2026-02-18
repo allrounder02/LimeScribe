@@ -28,6 +28,12 @@ class AppConfig:
     tts_response_format: str = "wav"
     tts_speed: float = 1.0
 
+    # Dialogue (OpenAI-compatible chat)
+    chat_url: str = "https://api.lemonfox.ai/v1/chat/completions"
+    chat_fallback_url: str = ""
+    chat_model: str = "llama-8b-chat"
+    chat_system_prompt: str = "You are a helpful assistant."
+
     # VAD
     vad_pause_threshold: float = 1.5
     vad_aggressiveness: int = 3
@@ -54,6 +60,10 @@ class AppConfig:
             tts_language=os.getenv("LEMONFOX_TTS_LANGUAGE", "en-us"),
             tts_response_format=os.getenv("LEMONFOX_TTS_RESPONSE_FORMAT", "wav"),
             tts_speed=float(os.getenv("LEMONFOX_TTS_SPEED", "1.0")),
+            chat_url=os.getenv("LEMONFOX_CHAT_URL", "https://api.lemonfox.ai/v1/chat/completions"),
+            chat_fallback_url=os.getenv("LEMONFOX_CHAT_FALLBACK_URL", ""),
+            chat_model=os.getenv("LEMONFOX_CHAT_MODEL", "llama-8b-chat"),
+            chat_system_prompt=os.getenv("LEMONFOX_CHAT_SYSTEM_PROMPT", "You are a helpful assistant."),
             vad_pause_threshold=float(os.getenv("VAD_PAUSE_THRESHOLD", "1.5")),
             vad_aggressiveness=int(os.getenv("VAD_AGGRESSIVENESS", "3")),
             vad_min_speech_seconds=float(os.getenv("VAD_MIN_SPEECH_SECONDS", "0.5")),
