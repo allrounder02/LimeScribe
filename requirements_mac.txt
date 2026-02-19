@@ -1,0 +1,3 @@
+# Native macOS desktop install.
+# Includes GUI + hotkeys + microphone dependencies through the shared base file.
+-r requirements.txt

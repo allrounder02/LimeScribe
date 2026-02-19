@@ -1,6 +1,6 @@
 # ZestVoice
 
-ZestVoice is a speech-to-text and text-to-speech application powered by the **LemonFox.ai** API (Whisper large-v3). It runs as a **Windows 11 desktop app** (PyQt6 GUI with system tray) or as a **headless CLI** for servers, Docker containers, and automation pipelines.
+ZestVoice is a speech-to-text and text-to-speech application powered by the **LemonFox.ai** API (Whisper large-v3). It runs as a **desktop app on Windows/macOS** (PyQt6 GUI with system tray) or as a **headless CLI** for servers, Docker containers, and automation pipelines.
 
 ## Features
 
@@ -8,13 +8,14 @@ ZestVoice is a speech-to-text and text-to-speech application powered by the **Le
 - **Recording mode** -- manual start/pause/stop recording
 - **File mode** -- transcribe audio files from disk
 - **Text-to-Speech** -- synthesize speech from text via LemonFox-compatible TTS API
+- **Dialogue mode** -- OpenAI-compatible chat with LemonFox Llama models
 - **Headless CLI** -- transcribe files and generate TTS without a GUI (`cli.py`)
 - **Docker support** -- containerized headless transcription and TTS
 
-### Desktop (Windows)
+### Desktop (Windows / macOS)
 
-- PyQt6 tabbed UI: Listening / Recording / File / Text to Speech / Settings
-- System tray icon with state colors (gray=idle, red=listening/recording)
+- PyQt6 tabbed UI: Capture / Text to Speech / Dialogue / Settings
+- System tray icon with state colors (idle=logo, listening=green badge, recording=red badge)
 - Global hotkeys: `Ctrl+Alt+L` (listen), `Ctrl+Alt+R` (record), configurable in Settings
 - Voice Activity Detection (`webrtcvad`) for pause-based chunking
 - Clipboard output and optional paste simulation
@@ -28,25 +29,18 @@ ZestVoice is a speech-to-text and text-to-speech application powered by the **Le
 
 ## Requirements
 
-### Desktop (Windows)
-
-- Windows 11
-- Python 3.12+
-- LemonFox API key
-- Microphone access
-
-### Headless / Docker
-
-- Python 3.12+ or Docker
-- LemonFox API key
-- PortAudio (`libportaudio2`) for mic-based modes; file transcription and TTS work without it
+| Mode | OS / Runtime | Required |
+|---|---|---|
+| Desktop | Windows 11+ | Python 3.12+, LemonFox API key, microphone access |
+| Desktop | macOS (Apple Silicon or Intel) | Python 3.12+, LemonFox API key, microphone access, `portaudio` (`brew install portaudio`) |
+| Headless / Docker | Linux / Docker | Python 3.12+ or Docker, LemonFox API key, PortAudio (`libportaudio2`) for mic-based modes |
 
 ## Installation
 
 ### Desktop (Windows)
 
 ```bash
-git clone <repo-url> && cd ZestVoice
+git clone <repo-url> && cd <repo-folder>
 python -m venv .venv
 
 # PowerShell
@@ -55,6 +49,47 @@ python -m venv .venv
 .venv\Scripts\activate.bat
 
 pip install -r requirements.txt
+```
+
+### Desktop (macOS native)
+
+Use this if you want your friend to run the full GUI natively on a Mac.
+
+| Step | Windows | macOS |
+|---|---|---|
+| Clone repo | `git clone <repo-url> && cd <repo-folder>` | `git clone <repo-url> && cd <repo-folder>` |
+| Create venv | `python -m venv .venv` | `python3 -m venv .venv` |
+| Activate venv | `.\.venv\Scripts\Activate.ps1` (PowerShell) | `source .venv/bin/activate` |
+| Install system audio lib | *(usually not needed)* | `brew install portaudio` |
+| Install Python deps | `pip install -r requirements.txt` | `pip install -r requirements_mac.txt` |
+| Run GUI | `python app.py` | `python app.py` |
+
+macOS permissions required:
+- Allow **Microphone** access when prompted.
+- Allow **Accessibility** access for global hotkeys (`pynput`) and optional key simulation (`pyautogui`).
+
+### Windows one-click launcher (`.bat`)
+
+For daily use on Windows, you can skip manual virtualenv activation:
+
+```bat
+run_zestvoice.bat
+```
+
+- First run: creates `.venv` and installs dependencies automatically
+- Later runs: launches GUI directly (uses `pythonw` so no console window)
+- Force dependency refresh:
+
+```bat
+run_zestvoice.bat --update
+```
+
+Note: `.bat` is a launcher, not a compiled executable. If you want a standalone `.exe`, package with PyInstaller.
+
+If you only want to run setup/update without launching the app:
+
+```bat
+install_windows.bat
 ```
 
 ### Headless (Linux / Docker)
@@ -94,6 +129,10 @@ All configuration options:
 | `LEMONFOX_TTS_LANGUAGE` | `en-us` | TTS language code |
 | `LEMONFOX_TTS_RESPONSE_FORMAT` | `wav` | TTS output format |
 | `LEMONFOX_TTS_SPEED` | `1.0` | TTS speed multiplier |
+| `LEMONFOX_CHAT_URL` | `https://api.lemonfox.ai/v1/chat/completions` | Primary Dialogue endpoint |
+| `LEMONFOX_CHAT_FALLBACK_URL` | *(empty)* | Optional fallback Dialogue endpoint |
+| `LEMONFOX_CHAT_MODEL` | `llama-8b-chat` | Dialogue model (`llama-8b-chat` or `llama-70b-chat`) |
+| `LEMONFOX_CHAT_SYSTEM_PROMPT` | `You are a helpful assistant.` | Default Dialogue system prompt |
 | `LOG_LEVEL` | `INFO` | Logging level (DEBUG/INFO/WARNING/ERROR) |
 | `LOG_FILE` | *(empty)* | Optional log file path |
 
@@ -113,13 +152,15 @@ The app starts in the system tray and opens the main window.
 
 **File tab** -- Click **Select File**, choose an audio file (`.mp3`, `.wav`, `.flac`, `.m4a`, `.ogg`), then click **Transcribe**.
 
-**Text to Speech tab** -- Enter text or click **Use Transcription Output**. Click **Generate & Play** to synthesize and hear audio. Click **Save Last Audio** to export.
+**Text to Speech tab** -- Enter text or click **Use Transcription Output**. Click **Generate & Play** to synthesize audio and play it in-app when the response format is WAV. Use **Save Last Audio** to export and **Open Saved Audio** to reopen previously saved files.
+
+**Dialogue tab** -- Chat with LemonFox OpenAI-compatible models. Pick `llama-8b-chat` or `llama-70b-chat`, optionally customize the system prompt, and choose whether to include prior conversation history in each request.
 
 **Settings tab** -- Three sub-pages: General (hotkeys), Speech (STT options + profiles), Voice (TTS options + voice presets). Changes apply immediately without restarting.
 
 **Tray menu** -- Show Window, Start Listening, Start Recording, Quit.
 
-**Window behavior** -- Click X to quit. Use **Minimize to Tray** to keep running in the background.
+**Window behavior** -- Click X to quit the app. Use the system tray icon menu (**Show Window**) to restore the window after it is hidden/minimized by the OS.
 
 ### Headless CLI
 
@@ -154,22 +195,32 @@ See [TUTORIAL.md](TUTORIAL.md) for detailed headless/Docker setup instructions.
 app.py                      # Desktop GUI entry point
 cli.py                      # Headless CLI entry point
 config.py                   # Settings loader (.env + settings.json)
+requirements_mac.txt        # macOS install target (currently extends requirements.txt)
 hotkeys.py                  # Global hotkey registration (pynput)
 Dockerfile                  # Headless container build
 
 core/                       # Pure Python, no PyQt6 dependency
   app_config.py             # Injectable config dataclass
+  cli_runtime.py            # CLI command wiring + lifecycle
+  dialogue_service.py       # Dialogue orchestration
   http_client.py            # Shared httpx client with connection pooling
+  lemonfox_chat_client.py   # LemonFox chat-completions API wrapper
   transcription_service.py  # STT orchestration (VAD, recording, file)
   tts_service.py            # TTS orchestration
+  tts_text.py               # Long-text cleanup + chunking helpers for TTS
   lemonfox_client.py        # LemonFox STT API wrapper
   lemonfox_tts_client.py    # LemonFox TTS API wrapper
   audio_recorder.py         # Mic recording to WAV bytes
   vad_listener.py           # Continuous listening + VAD chunking
-  audio_playback.py         # Cross-platform audio playback (sounddevice)
+  audio_format.py           # Audio format signature detection (WAV/FLAC/MP3/OGG)
+  wav_playback.py           # WAV-only playback controller for desktop TTS player
+  audio_playback.py         # Legacy cross-platform audio playback helper
   text_output.py            # Clipboard + paste helpers (lazy imports)
 
 ui/                         # PyQt6 widgets
+  app_runtime.py            # GUI runtime wiring + lifecycle
+  dialogue_panel.py         # Dialogue input + transcript widget
+  hotkey_bridge.py          # Thread-safe pynput -> Qt signal bridge
   main_window.py            # Main window + tab coordination
   settings_panel.py         # Settings, profiles, voice presets
   tts_panel.py              # TTS input widget
@@ -177,11 +228,28 @@ ui/                         # PyQt6 widgets
 
 data/
   voice_presets.json        # Voice actor presets (language/gender/id)
+
+tests/
+  test_runtime_wiring.py    # Non-GUI smoke tests for entrypoint wiring
+  test_dialogue_service.py  # Dialogue history behavior
+  test_lemonfox_chat_client.py # Chat API response parsing
+  test_lemonfox_tts_client.py  # TTS API error parsing and non-audio handling
 ```
 
 ### Architecture
 
-The `core/` layer is a standalone Python SDK with no GUI dependencies. It uses `httpx` with HTTP/2 and connection pooling for efficient API calls (important in VAD mode where each speech chunk is a separate request). The `ui/` layer wraps services with PyQt6 signals for thread-safe GUI updates. The `cli.py` entry point uses `core/` directly.
+The `core/` layer is a standalone Python SDK with no GUI dependencies. It uses `httpx` with HTTP/2 and connection pooling for efficient API calls (important in VAD mode where each speech chunk is a separate request). The `ui/` layer wraps services with PyQt6 signals for thread-safe GUI updates.
+
+### Entry Points and Wiring
+
+- `app.py` is a thin desktop entry point that delegates to `ui/app_runtime.py`.
+- `cli.py` is a thin headless entry point that delegates to `core/cli_runtime.py`.
+- Runtime wiring modules own startup/shutdown orchestration (logging, hotkeys, tray, settings callbacks, shared HTTP client cleanup).
+
+Import conventions:
+
+- Use explicit module imports inside packages (example: `from core.transcription_service import TranscriptionService`).
+- Use package-level exports in `core/__init__.py` and `ui/__init__.py` only for stable public interfaces; avoid wildcard re-exports.
 
 ```
                app.py (GUI)          cli.py (headless)
@@ -200,10 +268,11 @@ The `core/` layer is a standalone Python SDK with no GUI dependencies. It uses `
 
 - **401 Unauthorized**: check `LEMONFOX_API_KEY` in `.env`
 - **No mic input**: verify microphone permissions and default input device
-- **Hotkeys not firing**: run in a native Windows desktop session (not WSL)
-- **Clipboard/paste issues**: ensure focused target app accepts `Ctrl+V`
+- **Hotkeys not firing**: run in a native desktop session (not WSL/headless). On macOS, grant Accessibility permission.
+- **Clipboard/paste issues**: ensure focused target app accepts the platform paste shortcut (`Ctrl+V` on Windows/Linux, `Cmd+V` on macOS)
 - **Repeated idle text** (e.g. "Thank you" from silence): set `VAD_AGGRESSIVENESS=3` and `VAD_MIN_SPEECH_SECONDS=0.5` (or higher)
-- **PortAudio not found**: install `libportaudio2` (Linux) or use a Windows Python environment
+- **TTS playback error mentioning RIFF / non-audio**: set `LEMONFOX_TTS_RESPONSE_FORMAT=wav` for in-app playback. If the API returns text/JSON (for example bracketed error text), the app now surfaces that server message directly.
+- **PortAudio not found**: install `libportaudio2` (Linux) or `portaudio` via Homebrew on macOS
 
 ### Verbose logging
 

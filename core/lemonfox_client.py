@@ -109,7 +109,12 @@ class LemonFoxClient:
         last_error = None
         for endpoint in endpoints:
             try:
-                logger.debug("STT request -> %s", endpoint)
+                logger.debug(
+                    "STT request -> %s | language=%s response_format=%s",
+                    endpoint,
+                    data.get("language", ""),
+                    data.get("response_format", ""),
+                )
                 if hasattr(file_obj, "seek"):
                     file_obj.seek(0)
                 files = {"file": (filename, file_obj)}

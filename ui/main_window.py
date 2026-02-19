@@ -1,35 +1,44 @@
 """Main application window — coordinates services and UI panels."""
 
 import logging
+from datetime import datetime
+from pathlib import Path
 from typing import Optional
 
 from PyQt6.QtWidgets import (
     QMainWindow, QWidget, QTabWidget, QVBoxLayout, QHBoxLayout,
     QPushButton, QTextEdit, QLabel, QComboBox, QToolButton, QFileDialog, QApplication,
-    QSystemTrayIcon, QSplitter, QSizePolicy,
+    QSystemTrayIcon, QSplitter, QSizePolicy, QGroupBox,
 )
 from PyQt6.QtCore import Qt, QTimer, QSize, pyqtSignal
 
 from core.app_config import AppConfig
+from core.audio_format import detect_audio_format
+from core.dialogue_service import DialogueService
 from core.transcription_service import TranscriptionService
 from core.tts_service import TTSService
 from core.text_output import copy_to_clipboard
 from core.wav_playback import WavPlaybackController
+from ui.dialogue_panel import DialoguePanel
 from ui.icon_library import ui_icon
 from ui.tts_panel import TTSPanel
 from ui.settings_panel import SettingsPanel
 
 logger = logging.getLogger(__name__)
+OUTPUT_HISTORY_LIMIT = 3
+OUTPUT_HISTORY_PREVIEW_CHARS = 40
 
 
 class MainWindow(QMainWindow):
-    """Main application window with Listening / Recording / File tabs."""
+    """Main application window with Capture / TTS / Dialogue / Settings tabs."""
 
     # Signals for thread-safe service callbacks
     _transcription_ready = pyqtSignal(str)
     _transcription_error = pyqtSignal(str)
     _tts_audio_ready = pyqtSignal(bytes)
     _tts_error = pyqtSignal(str)
+    _dialogue_reply = pyqtSignal(str)
+    _dialogue_error = pyqtSignal(str)
 
     def __init__(self, config: Optional[AppConfig] = None):
         super().__init__()
@@ -50,6 +59,11 @@ class MainWindow(QMainWindow):
             on_audio_ready=self._tts_audio_ready.emit,
             on_error=self._tts_error.emit,
         )
+        self.dialogue_service = DialogueService(
+            config=self._config,
+            on_reply=self._dialogue_reply.emit,
+            on_error=self._dialogue_error.emit,
+        )
         self.tts_playback = WavPlaybackController()
         self._tts_ui_timer = QTimer(self)
         self._tts_ui_timer.setInterval(120)
@@ -60,11 +74,14 @@ class MainWindow(QMainWindow):
         self._transcription_error.connect(self._on_transcription_error)
         self._tts_audio_ready.connect(self._on_tts_done_play)
         self._tts_error.connect(self._on_tts_error)
+        self._dialogue_reply.connect(self._on_dialogue_reply)
+        self._dialogue_error.connect(self._on_dialogue_error)
 
         self.tray = None
         self._on_hotkeys_changed = None
         self._on_stt_settings_changed = None
         self._on_tts_settings_changed = None
+        self._on_dialogue_settings_changed = None
         self._on_profiles_changed = None
         self._on_tts_profiles_changed = None
         self._on_ui_settings_changed = None
@@ -77,6 +94,8 @@ class MainWindow(QMainWindow):
         self._profiles = []
         self._updating_listening_profiles = False
         self._tts_profiles = []
+        self._output_history = []
+        self._tts_last_audio_dir = ""
 
         central = QWidget()
         self.setCentralWidget(central)
@@ -91,26 +110,39 @@ class MainWindow(QMainWindow):
 
         # Tabs (top pane)
         self.tabs = QTabWidget()
-        self.tabs.addTab(self._build_listening_tab(), "Listening")
+        self.tabs.addTab(self._build_capture_tab(), "Capture")
         self.tabs.setTabIcon(0, ui_icon(self, "tab_listening"))
-        self.tabs.addTab(self._build_recording_tab(), "Recording")
-        self.tabs.setTabIcon(1, ui_icon(self, "tab_recording"))
-        self.tabs.addTab(self._build_file_tab(), "File")
-        self.tabs.setTabIcon(2, ui_icon(self, "tab_file"))
 
         # TTS panel (extracted widget)
         self.tts_panel = TTSPanel()
         self.tts_panel.generate_requested.connect(self._on_tts_generate)
+        self.tts_panel.optimization_settings_changed.connect(self._on_tts_optimization_settings_changed)
         self.tts_panel.use_output_requested.connect(self._load_tts_from_output)
         self.tts_panel.save_audio_requested.connect(self._save_last_tts_audio)
+        self.tts_panel.open_saved_audio_requested.connect(self._open_saved_tts_audio)
         self.tts_panel.tts_profile_selected.connect(self._on_tts_profile_selected)
         self.tts_panel.play_pause_requested.connect(self._toggle_tts_playback)
         self.tts_panel.stop_requested.connect(self._stop_tts_playback)
         self.tts_panel.seek_requested.connect(self._seek_tts_playback)
         self.tts_panel.speed_changed.connect(self._set_tts_playback_speed)
         self.tts_panel.pitch_changed.connect(self._set_tts_playback_pitch)
+        self.tts_panel.api_speed_changed.connect(self._on_tts_api_speed_changed)
         self.tabs.addTab(self.tts_panel, "Text to Speech")
-        self.tabs.setTabIcon(3, ui_icon(self, "tab_tts"))
+        self.tabs.setTabIcon(1, ui_icon(self, "tab_tts"))
+
+        # Dialogue panel (OpenAI-compatible chat)
+        self.dialogue_panel = DialoguePanel()
+        self.dialogue_panel.send_requested.connect(self._on_dialogue_send)
+        self.dialogue_panel.reset_requested.connect(self._on_dialogue_reset)
+        self.dialogue_panel.use_output_requested.connect(self._load_dialogue_from_output)
+        self.dialogue_panel.model_changed.connect(self._on_dialogue_model_changed)
+        self.dialogue_panel.system_prompt_changed.connect(self._on_dialogue_system_prompt_changed)
+        self.dialogue_panel.history_mode_changed.connect(self._on_dialogue_history_mode_changed)
+        self.dialogue_panel.set_model(self.dialogue_service.client.model, emit=False)
+        self.dialogue_panel.set_system_prompt(self.dialogue_service.system_prompt, emit=False)
+        self.dialogue_panel.set_include_history(self.dialogue_service.include_history, emit=False)
+        self.tabs.addTab(self.dialogue_panel, "Dialogue")
+        self.tabs.setTabIcon(2, ui_icon(self, "tab_dialogue"))
 
         # Settings panel (extracted widget)
         self.settings_panel = SettingsPanel()
@@ -121,7 +153,7 @@ class MainWindow(QMainWindow):
         self.settings_panel.tts_profiles_changed.connect(self._on_tts_profiles_from_panel)
         self.settings_panel.ui_settings_changed.connect(self._on_ui_settings_from_panel)
         self.tabs.addTab(self.settings_panel, "Settings")
-        self.tabs.setTabIcon(4, ui_icon(self, "tab_settings"))
+        self.tabs.setTabIcon(3, ui_icon(self, "tab_settings"))
 
         self.tabs.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Ignored)
         self.tabs.setMinimumHeight(100)
@@ -153,10 +185,23 @@ class MainWindow(QMainWindow):
         self.text_output.setPlaceholderText("Transcription output appears here. You can edit it directly.")
         layout.addWidget(self.text_output)
 
+        history_row = QHBoxLayout()
+        history_row.addWidget(QLabel("Recent outputs:"))
+        self.combo_output_history = QComboBox()
+        self.combo_output_history.setEditable(False)
+        self.combo_output_history.setMinimumContentsLength(26)
+        self.combo_output_history.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToContentsOnFirstShow)
+        self.btn_restore_output = QPushButton("Restore")
+        self.btn_restore_output.clicked.connect(self._restore_selected_output)
+        history_row.addWidget(self.combo_output_history, 1)
+        history_row.addWidget(self.btn_restore_output)
+        layout.addLayout(history_row)
+
         btn_row = QHBoxLayout()
-        self.btn_minimize_tray = QPushButton("Minimize to Tray")
-        self.btn_minimize_tray.clicked.connect(self._minimize_to_tray)
-        self.btn_minimize_tray.setIcon(ui_icon(self, "output_minimize_tray"))
+        self.btn_quick_listen = QPushButton("Listen")
+        self.btn_quick_listen.clicked.connect(self._toggle_quick_listening)
+        self.btn_quick_listen.setIcon(ui_icon(self, "tab_listening"))
+        self.btn_quick_listen.setToolTip("Start/stop listening mode")
         self.btn_edit_output = QPushButton("Edit Output")
         self.btn_edit_output.clicked.connect(self._focus_output_for_edit)
         self.btn_edit_output.setIcon(ui_icon(self, "output_edit"))
@@ -166,8 +211,10 @@ class MainWindow(QMainWindow):
         self.btn_copy = QPushButton("Copy to Clipboard")
         self.btn_copy.clicked.connect(self._copy_output)
         self.btn_copy.setIcon(ui_icon(self, "output_copy"))
+        self._sync_quick_listen_button(self.stt_service.is_listening())
+        self._refresh_output_history_controls()
+        btn_row.addWidget(self.btn_quick_listen)
         btn_row.addStretch()
-        btn_row.addWidget(self.btn_minimize_tray)
         btn_row.addWidget(self.btn_edit_output)
         btn_row.addWidget(self.btn_clear)
         btn_row.addWidget(self.btn_copy)
@@ -209,6 +256,33 @@ class MainWindow(QMainWindow):
             language=settings.get("tts_language", self.tts_service.client.language),
             response_format=settings.get("tts_response_format", self.tts_service.client.response_format),
             speed=str(settings.get("tts_speed", self.tts_service.client.speed)),
+        )
+        self.tts_panel.set_api_speed(self._coerce_tts_speed_value(settings.get("tts_speed", self.tts_service.client.speed)) or 1.0)
+        threshold_raw = settings.get("tts_optimize_threshold_chars", 240)
+        try:
+            threshold_chars = int(threshold_raw)
+        except (TypeError, ValueError):
+            threshold_chars = 240
+        self.tts_panel.set_long_text_optimization(
+            enabled=bool(settings.get("tts_optimize_long_text", True)),
+            threshold_chars=threshold_chars,
+            emit=False,
+        )
+
+    def attach_dialogue_settings(self, settings: dict, on_dialogue_settings_changed=None):
+        self._on_dialogue_settings_changed = on_dialogue_settings_changed
+        model = str(settings.get("chat_model", self.dialogue_service.client.model)).strip()
+        system_prompt = str(settings.get("chat_system_prompt", self.dialogue_service.system_prompt)).strip()
+        include_history = bool(settings.get("chat_include_history", True))
+
+        self.dialogue_panel.set_model(model, emit=False)
+        self.dialogue_panel.set_system_prompt(system_prompt, emit=False)
+        self.dialogue_panel.set_include_history(include_history, emit=False)
+        self.dialogue_service.update_settings(
+            model=model,
+            system_prompt=system_prompt,
+            include_history=include_history,
+            reset_history=True,
         )
 
     def attach_profiles(self, settings: dict, on_profiles_changed=None):
@@ -272,7 +346,7 @@ class MainWindow(QMainWindow):
         self._apply_theme()
         self._set_server_status(self._server_online)
         self._sync_retry_last_failed_button()
-        self._set_listening_button_style(self.stt_service.is_listening())
+        self._refresh_capture_button_styles()
         raw = str(settings.get("ui_splitter_sizes", "560,340")).strip()
         try:
             parts = [int(x.strip()) for x in raw.split(",") if x.strip()]
@@ -280,8 +354,26 @@ class MainWindow(QMainWindow):
                 self.main_splitter.setSizes(parts[:2])
         except ValueError:
             pass
+        self._load_output_history(settings.get("output_history"))
 
     # ── Listening tab ──────────────────────────────────────────────
+
+    def _build_capture_tab(self):
+        tab = QWidget()
+        layout = QVBoxLayout(tab)
+        layout.addWidget(self._wrap_capture_section("Listening (Automatic VAD)", self._build_listening_tab()))
+        layout.addWidget(self._wrap_capture_section("Recording (Manual)", self._build_recording_tab()))
+        layout.addWidget(self._wrap_capture_section("File Transcription", self._build_file_tab()))
+        layout.addStretch()
+        return tab
+
+    @staticmethod
+    def _wrap_capture_section(title: str, content: QWidget) -> QGroupBox:
+        section = QGroupBox(title)
+        section_layout = QVBoxLayout(section)
+        section_layout.setContentsMargins(10, 10, 10, 10)
+        section_layout.addWidget(content)
+        return section
 
     def _build_listening_tab(self):
         tab = QWidget()
@@ -327,7 +419,6 @@ class MainWindow(QMainWindow):
         layout.addWidget(self.btn_listen_toggle)
         self._set_server_status(True)
         self._sync_retry_last_failed_button()
-        layout.addStretch()
         return tab
 
     def _toggle_listening(self, checked):
@@ -338,13 +429,17 @@ class MainWindow(QMainWindow):
 
     def _start_listening(self):
         if self.stt_service.is_listening():
+            self._sync_listening_ui(True)
             return
-        self._sync_listening_ui(True)
         self.stt_service.start_listening()
+        self._sync_listening_ui(self.stt_service.is_listening())
 
     def _stop_listening(self):
+        if not self.stt_service.is_listening():
+            self._sync_listening_ui(False)
+            return
         self.stt_service.stop_listening()
-        self._sync_listening_ui(False)
+        self._sync_listening_ui(self.stt_service.is_listening())
 
     def _sync_listening_ui(self, listening: bool):
         self.btn_listen_toggle.blockSignals(True)
@@ -352,6 +447,7 @@ class MainWindow(QMainWindow):
         self.btn_listen_toggle.blockSignals(False)
         self.btn_listen_toggle.setText("Stop Listening" if listening else "Start Listening")
         self._set_listening_button_style(listening)
+        self._sync_quick_listen_button(listening)
         self.statusBar().showMessage("Listening (VAD)..." if listening else "Ready")
         if self.tray:
             self.tray.set_state("listening" if listening else "idle")
@@ -378,7 +474,6 @@ class MainWindow(QMainWindow):
         btn_row.addWidget(self.btn_rec_pause)
         btn_row.addWidget(self.btn_rec_stop)
         layout.addLayout(btn_row)
-        layout.addStretch()
         return tab
 
     def _rec_start(self):
@@ -410,6 +505,22 @@ class MainWindow(QMainWindow):
         if self.tray:
             self.tray.set_state("idle")
 
+    def _toggle_quick_listening(self):
+        if self.stt_service.is_listening():
+            self._stop_listening()
+        else:
+            self._start_listening()
+
+    def _sync_quick_listen_button(self, listening: bool):
+        if not hasattr(self, "btn_quick_listen"):
+            return
+        if listening:
+            self.btn_quick_listen.setText("Stop Listen")
+            self.btn_quick_listen.setToolTip("Stop listening mode")
+        else:
+            self.btn_quick_listen.setText("Listen")
+            self.btn_quick_listen.setToolTip("Start listening mode")
+
     # ── File tab ───────────────────────────────────────────────────
 
     def _build_file_tab(self):
@@ -428,7 +539,6 @@ class MainWindow(QMainWindow):
         self.btn_transcribe_file.setEnabled(False)
         self.btn_transcribe_file.clicked.connect(self._transcribe_file)
         layout.addWidget(self.btn_transcribe_file)
-        layout.addStretch()
 
         self._selected_file = None
         return tab
@@ -479,12 +589,24 @@ class MainWindow(QMainWindow):
             voice=settings_clean.get("tts_voice"),
             language=settings_clean.get("tts_language"),
             response_format=settings_clean.get("tts_response_format"),
-            speed=float(settings_clean["tts_speed"]) if settings_clean.get("tts_speed") else None,
+            speed=self._coerce_tts_speed_value(settings_clean.get("tts_speed")),
         )
+        self.tts_panel.set_api_speed(self._coerce_tts_speed_value(settings_clean.get("tts_speed")) or 1.0)
+        settings_clean["tts_optimize_long_text"] = self.tts_panel.should_optimize_long_text()
+        settings_clean["tts_optimize_threshold_chars"] = self.tts_panel.get_optimize_threshold_chars()
         if self._on_tts_settings_changed and not silent:
             self._on_tts_settings_changed(settings_clean)
         if not silent:
             self.statusBar().showMessage("TTS settings updated")
+
+    def _on_tts_optimization_settings_changed(self, enabled: bool, threshold_chars: int):
+        if self._on_tts_settings_changed:
+            self._on_tts_settings_changed(
+                {
+                    "tts_optimize_long_text": bool(enabled),
+                    "tts_optimize_threshold_chars": int(threshold_chars),
+                }
+            )
 
     def _on_ui_settings_from_panel(self, settings: dict):
         dark_mode = bool(settings.get("dark_mode", False))
@@ -494,7 +616,7 @@ class MainWindow(QMainWindow):
             self._apply_theme()
             self._set_server_status(self._server_online)
             self._sync_retry_last_failed_button()
-            self._set_listening_button_style(self.stt_service.is_listening())
+            self._refresh_capture_button_styles()
             self.statusBar().showMessage("Theme updated")
         if self._on_ui_settings_changed:
             self._on_ui_settings_changed({"dark_mode": self.dark_mode})
@@ -554,11 +676,7 @@ class MainWindow(QMainWindow):
             self.settings_panel.set_active_profile(name)
             self.settings_panel.apply_profile(profile)
         else:
-            speed_raw = str(profile.get("tts_speed", self.tts_service.client.speed)).strip()
-            try:
-                speed = float(speed_raw)
-            except ValueError:
-                speed = float(self.tts_service.client.speed)
+            speed = self._coerce_tts_speed_value(profile.get("tts_speed", self.tts_service.client.speed))
             self.stt_service.update_settings(
                 language=profile.get("stt_language"),
                 response_format=profile.get("stt_response_format"),
@@ -633,11 +751,7 @@ class MainWindow(QMainWindow):
         profile = self._find_tts_profile_by_name(name)
         if not profile:
             return False
-        speed_raw = str(profile.get("tts_speed", self.tts_service.client.speed)).strip()
-        try:
-            speed = float(speed_raw)
-        except ValueError:
-            speed = float(self.tts_service.client.speed)
+        speed = self._coerce_tts_speed_value(profile.get("tts_speed", self.tts_service.client.speed))
         self.tts_service.update_settings(
             model=profile.get("tts_model"),
             voice=profile.get("tts_voice"),
@@ -645,6 +759,7 @@ class MainWindow(QMainWindow):
             response_format=profile.get("tts_response_format"),
             speed=speed,
         )
+        self.tts_panel.set_api_speed(speed if speed is not None else self.tts_service.client.speed)
         self.tts_panel.set_active_tts_profile(name)
         if sync_settings_panel:
             self.settings_panel.set_active_tts_profile(name)
@@ -675,6 +790,7 @@ class MainWindow(QMainWindow):
         self._sync_retry_last_failed_button()
         display_text = self._format_transcription_text(text)
         self._append_output_text(display_text)
+        self._remember_output_snapshot(self.text_output.toPlainText(), source_label="Transcription")
         if self.auto_copy_transcription:
             copy_to_clipboard(display_text)
             output_cleared, listening_stopped = self._apply_post_copy_actions()
@@ -704,6 +820,16 @@ class MainWindow(QMainWindow):
         if not audio_bytes:
             self.statusBar().showMessage("TTS returned empty audio")
             return
+        audio_format = detect_audio_format(audio_bytes)
+        if audio_format != "wav":
+            self.tts_panel.set_playback_available(False)
+            self.tts_panel.set_playing(False)
+            self._tts_ui_timer.stop()
+            self.statusBar().showMessage(
+                f"TTS generated {audio_format.upper()} audio; in-app playback supports WAV only. "
+                "Set TTS response format to wav for Generate & Play."
+            )
+            return
         try:
             self.tts_playback.load_wav_bytes(audio_bytes)
             self.tts_playback.set_speed(self.tts_panel.get_playback_speed())
@@ -723,18 +849,32 @@ class MainWindow(QMainWindow):
         self.tts_panel.set_generate_enabled(True)
         self.statusBar().showMessage(f"TTS failed: {err}")
 
+    def _on_dialogue_reply(self, text: str):
+        self.dialogue_panel.set_busy(False)
+        self.dialogue_panel.append_assistant(text)
+        self.statusBar().showMessage("Dialogue response ready")
+
+    def _on_dialogue_error(self, err: str):
+        logger.error("Dialogue failed: %s", err)
+        self.dialogue_panel.set_busy(False)
+        self.dialogue_panel.append_error(err)
+        self.statusBar().showMessage(f"Dialogue failed: {err}")
+
     # ── TTS actions ────────────────────────────────────────────────
 
     def _sync_tts_settings_from_panel(self) -> bool:
         """Ensure latest UI values are used for the next synth request."""
         try:
             settings = self.settings_panel.collect_tts_settings()
+            api_speed = self.tts_panel.get_api_speed()
+            settings["tts_speed"] = str(api_speed)
+            self.settings_panel.set_tts_speed_value(api_speed, emit=False)
             self.tts_service.update_settings(
                 model=settings.get("tts_model"),
                 voice=settings.get("tts_voice"),
                 language=settings.get("tts_language"),
                 response_format=settings.get("tts_response_format"),
-                speed=float(settings["tts_speed"]) if settings.get("tts_speed") else None,
+                speed=self._coerce_tts_speed_value(settings.get("tts_speed")),
             )
             return True
         except Exception as e:
@@ -744,10 +884,22 @@ class MainWindow(QMainWindow):
     def _on_tts_generate(self, text: str):
         if not self._sync_tts_settings_from_panel():
             return
+        response_format = str(self.tts_service.client.response_format or "").strip().lower() or "unknown"
+        optimize_long_text = self.tts_panel.should_optimize_long_text()
+        threshold_chars = self.tts_panel.get_optimize_threshold_chars()
         self.tts_panel.set_generate_enabled(False)
         self._stop_tts_playback(update_status=False)
-        self.statusBar().showMessage("Generating speech...")
-        self.tts_service.synthesize(text)
+        if response_format == "wav":
+            self.statusBar().showMessage("Generating speech...")
+        else:
+            self.statusBar().showMessage(
+                f"Generating {response_format.upper()} audio (playback controls require WAV)."
+            )
+        self.tts_service.synthesize(
+            text,
+            optimize_long_text=optimize_long_text,
+            long_text_threshold_chars=threshold_chars,
+        )
 
     def _load_tts_from_output(self):
         text = self.text_output.toPlainText().strip()
@@ -762,17 +914,76 @@ class MainWindow(QMainWindow):
         if not audio:
             self.statusBar().showMessage("No TTS audio to save")
             return
+        fmt = detect_audio_format(audio)
+        default_ext = fmt if fmt in {"wav", "flac", "mp3", "ogg"} else "wav"
+        if default_ext == "wav":
+            dialog_filter = "WAV Audio (*.wav);;All Files (*)"
+        elif default_ext == "flac":
+            dialog_filter = "FLAC Audio (*.flac);;All Files (*)"
+        elif default_ext == "mp3":
+            dialog_filter = "MP3 Audio (*.mp3);;All Files (*)"
+        else:
+            dialog_filter = "OGG Audio (*.ogg);;All Files (*)"
+        default_name = f"tts_output.{default_ext}"
+        if self._tts_last_audio_dir:
+            default_path = str(Path(self._tts_last_audio_dir) / default_name)
+        else:
+            default_path = default_name
         path, _ = QFileDialog.getSaveFileName(
-            self, "Save TTS Audio", "tts_output.wav", "WAV Audio (*.wav);;All Files (*)"
+            self, "Save TTS Audio", default_path, dialog_filter
         )
         if not path:
             return
         try:
             with open(path, "wb") as f:
                 f.write(audio)
+            self._tts_last_audio_dir = str(Path(path).parent)
             self.statusBar().showMessage("TTS audio saved")
         except OSError as e:
             self.statusBar().showMessage(f"Failed to save audio: {e}")
+
+    def _open_saved_tts_audio(self):
+        path, _ = QFileDialog.getOpenFileName(
+            self,
+            "Open Saved TTS Audio",
+            self._tts_last_audio_dir,
+            "Audio Files (*.wav *.flac *.mp3 *.ogg);;WAV Audio (*.wav);;All Files (*)",
+        )
+        if not path:
+            return
+
+        try:
+            with open(path, "rb") as f:
+                audio_bytes = f.read()
+        except OSError as e:
+            self.statusBar().showMessage(f"Failed to open audio file: {e}")
+            return
+
+        self._tts_last_audio_dir = str(Path(path).parent)
+        audio_format = detect_audio_format(audio_bytes)
+        if audio_format != "wav":
+            self.tts_panel.set_playback_available(False)
+            self.tts_panel.set_playing(False)
+            self._tts_ui_timer.stop()
+            self.statusBar().showMessage(
+                f"Loaded {audio_format.upper()} file. In-app playback supports WAV only."
+            )
+            return
+
+        try:
+            self._stop_tts_playback(update_status=False)
+            self.tts_playback.load_wav_bytes(audio_bytes)
+            self.tts_playback.set_speed(self.tts_panel.get_playback_speed())
+            self.tts_playback.set_pitch_semitones(self.tts_panel.get_playback_pitch())
+            duration = self.tts_playback.get_duration_seconds()
+            self.tts_panel.set_playback_available(True)
+            self.tts_panel.set_duration(duration)
+            self.tts_playback.play()
+            self.tts_panel.set_playing(True)
+            self._tts_ui_timer.start()
+            self.statusBar().showMessage(f"Loaded and playing: {Path(path).name}")
+        except Exception as e:
+            self.statusBar().showMessage(f"Failed to load audio: {e}")
 
     def _toggle_tts_playback(self):
         if not self.tts_playback.has_audio():
@@ -808,6 +1019,24 @@ class MainWindow(QMainWindow):
     def _set_tts_playback_pitch(self, pitch: float):
         self.tts_playback.set_pitch_semitones(pitch)
 
+    def _on_tts_api_speed_changed(self, speed: float):
+        speed_value = self._coerce_tts_speed_value(speed)
+        if speed_value is None:
+            return
+        self.tts_service.update_settings(speed=speed_value)
+        self.settings_panel.set_tts_speed_value(speed_value, emit=False)
+
+    def _coerce_tts_speed_value(self, value) -> float | None:
+        if value is None:
+            return None
+        raw = str(value).strip().replace(",", ".")
+        if not raw:
+            return None
+        try:
+            return float(raw)
+        except ValueError:
+            return float(self.tts_service.client.speed)
+
     def _refresh_tts_playback_ui(self):
         if not self.tts_playback.has_audio():
             self._tts_ui_timer.stop()
@@ -821,12 +1050,194 @@ class MainWindow(QMainWindow):
         if not playing:
             self._tts_ui_timer.stop()
 
+    # ── Dialogue actions ───────────────────────────────────────────
+
+    def _on_dialogue_send(self, text: str):
+        message = (text or "").strip()
+        if not message:
+            self.statusBar().showMessage("Dialogue message cannot be empty")
+            return
+
+        model = self.dialogue_panel.get_model()
+        system_prompt = self.dialogue_panel.get_system_prompt()
+        include_history = self.dialogue_panel.should_include_history()
+        self.dialogue_service.update_settings(
+            model=model,
+            system_prompt=system_prompt,
+            include_history=include_history,
+        )
+        self._persist_dialogue_settings(
+            {
+                "chat_model": model,
+                "chat_system_prompt": system_prompt,
+                "chat_include_history": include_history,
+            }
+        )
+        self.dialogue_panel.append_user(message)
+        self.dialogue_panel.set_busy(True)
+        self.statusBar().showMessage("Generating dialogue response...")
+        self.dialogue_service.send(message)
+
+    def _on_dialogue_reset(self):
+        model = self.dialogue_panel.get_model()
+        system_prompt = self.dialogue_panel.get_system_prompt()
+        include_history = self.dialogue_panel.should_include_history()
+        self.dialogue_service.update_settings(
+            model=model,
+            system_prompt=system_prompt,
+            include_history=include_history,
+            reset_history=True,
+        )
+        self._persist_dialogue_settings(
+            {
+                "chat_model": model,
+                "chat_system_prompt": system_prompt,
+                "chat_include_history": include_history,
+            }
+        )
+        self.dialogue_panel.clear_dialogue()
+        self.statusBar().showMessage("Dialogue history cleared")
+
+    def _load_dialogue_from_output(self):
+        text = self.text_output.toPlainText().strip()
+        if not text:
+            self.statusBar().showMessage("No transcription output to load")
+            return
+        self.dialogue_panel.set_input_text(text)
+        self.statusBar().showMessage("Loaded transcription output into Dialogue")
+
+    def _on_dialogue_model_changed(self, model: str):
+        self.dialogue_service.update_settings(model=model)
+        self._persist_dialogue_settings({"chat_model": str(model or "").strip()})
+
+    def _on_dialogue_system_prompt_changed(self, prompt: str):
+        prompt_value = str(prompt or "").strip()
+        self.dialogue_service.update_settings(system_prompt=prompt_value, reset_history=True)
+        self.dialogue_panel.clear_dialogue()
+        self._persist_dialogue_settings({"chat_system_prompt": prompt_value})
+        self.statusBar().showMessage("Dialogue system prompt updated")
+
+    def _on_dialogue_history_mode_changed(self, enabled: bool):
+        include_history = bool(enabled)
+        self.dialogue_service.update_settings(include_history=include_history, reset_history=True)
+        self.dialogue_panel.clear_dialogue()
+        self._persist_dialogue_settings({"chat_include_history": include_history})
+        if include_history:
+            self.statusBar().showMessage("Dialogue now includes conversation history")
+        else:
+            self.statusBar().showMessage("Dialogue now sends each message independently")
+
+    def _persist_dialogue_settings(self, payload: dict):
+        if self._on_dialogue_settings_changed:
+            self._on_dialogue_settings_changed(payload)
+
     # ── Shared output logic ────────────────────────────────────────
+
+    def _load_output_history(self, history_items):
+        entries = []
+        if isinstance(history_items, list):
+            for item in history_items:
+                if not isinstance(item, dict):
+                    continue
+                text = str(item.get("text", "")).strip()
+                if not text:
+                    continue
+                created_at = str(item.get("created_at", "")).strip()
+                name = str(item.get("name", "")).strip() or self._build_output_history_name(
+                    text,
+                    created_at,
+                    "Saved",
+                )
+                entries.append(
+                    {
+                        "name": name,
+                        "text": text,
+                        "created_at": created_at,
+                    }
+                )
+                if len(entries) >= OUTPUT_HISTORY_LIMIT:
+                    break
+        self._output_history = entries
+        self._refresh_output_history_controls()
+
+    def _remember_output_snapshot(self, text: str, source_label: str):
+        cleaned = (text or "").strip()
+        if not cleaned:
+            return
+        now_iso = datetime.now().isoformat(timespec="seconds")
+        name = self._build_output_history_name(cleaned, now_iso, source_label)
+        deduped = [item for item in self._output_history if item.get("text") != cleaned]
+        deduped.insert(
+            0,
+            {
+                "name": name,
+                "text": cleaned,
+                "created_at": now_iso,
+            },
+        )
+        self._output_history = deduped[:OUTPUT_HISTORY_LIMIT]
+        self._refresh_output_history_controls()
+        self._persist_output_history()
+
+    def _refresh_output_history_controls(self):
+        if not hasattr(self, "combo_output_history"):
+            return
+        self.combo_output_history.blockSignals(True)
+        self.combo_output_history.clear()
+        for item in self._output_history:
+            self.combo_output_history.addItem(str(item.get("name", "")).strip())
+        self.combo_output_history.blockSignals(False)
+        has_history = bool(self._output_history)
+        self.combo_output_history.setEnabled(has_history)
+        self.btn_restore_output.setEnabled(has_history)
+        self.combo_output_history.setToolTip("Last three transcription outputs")
+        self.btn_restore_output.setToolTip("Restore selected output to editor")
+
+    def _persist_output_history(self):
+        if self._on_ui_settings_changed:
+            self._on_ui_settings_changed(
+                {
+                    "output_history": [dict(item) for item in self._output_history],
+                }
+            )
+
+    def _restore_selected_output(self):
+        index = self.combo_output_history.currentIndex()
+        if index < 0 or index >= len(self._output_history):
+            self.statusBar().showMessage("No saved output selected")
+            return
+        selected = self._output_history[index]
+        text = str(selected.get("text", "")).strip()
+        if not text:
+            self.statusBar().showMessage("Saved output is empty")
+            return
+        self.text_output.setPlainText(text)
+        self.statusBar().showMessage(f"Restored output: {selected.get('name', 'Saved output')}")
+
+    @staticmethod
+    def _build_output_history_name(text: str, created_at: str, source_label: str) -> str:
+        stamp = MainWindow._format_history_stamp(created_at)
+        preview = " ".join(str(text).split())
+        if len(preview) > OUTPUT_HISTORY_PREVIEW_CHARS:
+            preview = f"{preview[:OUTPUT_HISTORY_PREVIEW_CHARS].rstrip()}..."
+        return f"{source_label} {stamp} | {preview}"
+
+    @staticmethod
+    def _format_history_stamp(created_at: str) -> str:
+        raw = str(created_at or "").strip()
+        if not raw:
+            return datetime.now().strftime("%Y-%m-%d %H:%M")
+        try:
+            return datetime.fromisoformat(raw).strftime("%Y-%m-%d %H:%M")
+        except ValueError:
+            normalized = raw.replace("T", " ")
+            return normalized[:16] if len(normalized) >= 16 else normalized
 
     def _copy_output(self):
         text = self.text_output.toPlainText()
         if text:
             QApplication.clipboard().setText(text)
+            self._remember_output_snapshot(text, source_label="Copied")
             output_cleared, listening_stopped = self._apply_post_copy_actions()
             status = "Copied to clipboard"
             if output_cleared:
@@ -934,6 +1345,24 @@ class MainWindow(QMainWindow):
 
     # ── Tray / Window ──────────────────────────────────────────────
 
+    def show_and_focus(self):
+        self.showNormal()
+        self.raise_()
+        self.activateWindow()
+
+    def toggle_listening_from_external(self):
+        self.show_and_focus()
+        self.tabs.setCurrentIndex(0)  # Capture tab
+        self.btn_listen_toggle.click()
+
+    def toggle_recording_from_external(self):
+        self.show_and_focus()
+        self.tabs.setCurrentIndex(0)  # Capture tab
+        if self.stt_service.is_recording:
+            self._rec_stop()
+        else:
+            self._rec_start()
+
     def _minimize_to_tray(self):
         self.hide()
         self.statusBar().showMessage("Running in tray")
@@ -971,13 +1400,13 @@ class MainWindow(QMainWindow):
         icon_key = "listening_server_status"
         if self._server_online:
             tooltip = "Server: Connected"
-            bg = "#2e7d32" if not self.dark_mode else "#3f9b52"
-            border = "#256528" if not self.dark_mode else "#347f44"
+            bg = "#6a9a81" if not self.dark_mode else "#4f7a68"
+            border = "#58826d" if not self.dark_mode else "#456a5a"
         else:
             icon_key = "listening_server_offline"
             tooltip = "Server Offline - Stop Speaking"
-            bg = "#c62828" if not self.dark_mode else "#d64545"
-            border = "#a32020" if not self.dark_mode else "#bf3d3d"
+            bg = "#b87474" if not self.dark_mode else "#9a6262"
+            border = "#9f6464" if not self.dark_mode else "#865656"
         if detail:
             tooltip = f"{tooltip}\n{detail}"
         self.btn_server_state.setIcon(ui_icon(self, icon_key))
@@ -997,13 +1426,13 @@ class MainWindow(QMainWindow):
         enabled = self.stt_service.has_last_failed_capture()
         self.btn_retry_last_failed.setEnabled(enabled)
         if enabled:
-            bg = "#2f6d9a" if not self.dark_mode else "#3f7dac"
-            hover = "#3c7cab" if not self.dark_mode else "#4c8dbf"
-            border = "#285f86" if not self.dark_mode else "#356f99"
+            bg = "#6a86a3" if not self.dark_mode else "#5e738b"
+            hover = "#7893af" if not self.dark_mode else "#6b8199"
+            border = "#5c7893" if not self.dark_mode else "#51657c"
         else:
-            bg = "#9aaec0" if not self.dark_mode else "#4f6275"
+            bg = "#b0bfcd" if not self.dark_mode else "#4a5868"
             hover = bg
-            border = "#8ca1b5" if not self.dark_mode else "#45596d"
+            border = "#9fb0c0" if not self.dark_mode else "#425060"
         self.btn_retry_last_failed.setStyleSheet(
             f"""
             QToolButton {{
@@ -1027,24 +1456,123 @@ class MainWindow(QMainWindow):
 
     def _set_listening_button_style(self, listening: bool):
         if listening:
-            base = "#c62828" if not self.dark_mode else "#d64545"
-            hover = "#d84343" if not self.dark_mode else "#e35f5f"
-            pressed = "#ad2323" if not self.dark_mode else "#bf3d3d"
+            base = "#8f3b3b" if not self.dark_mode else "#7a3030"
+            hover = "#a14848" if not self.dark_mode else "#8b3737"
+            pressed = "#7a3030" if not self.dark_mode else "#682626"
         else:
-            base = "#2f6d9a" if not self.dark_mode else "#3f7dac"
-            hover = "#3c7cab" if not self.dark_mode else "#4c8dbf"
-            pressed = "#285f86" if not self.dark_mode else "#356f99"
-        self.btn_listen_toggle.setStyleSheet(
+            base = "#a97845" if not self.dark_mode else "#986e43"
+            hover = "#b78451" if not self.dark_mode else "#a77c4f"
+            pressed = "#93673b" if not self.dark_mode else "#845f39"
+        self._apply_button_palette(
+            self.btn_listen_toggle,
+            base=base,
+            hover=hover,
+            pressed=pressed,
+        )
+        if hasattr(self, "btn_quick_listen"):
+            self._apply_button_palette(
+                self.btn_quick_listen,
+                base=base,
+                hover=hover,
+                pressed=pressed,
+            )
+
+    def _set_recording_button_styles(self, recording: bool):
+        if not hasattr(self, "btn_rec_start"):
+            return
+        if self.dark_mode:
+            start_base, start_hover, start_pressed = "#5a7f70", "#6a8f7f", "#4e6f63"
+            pause_base, pause_hover, pause_pressed = "#4f7264", "#5d8474", "#456558"
+            stop_base, stop_hover, stop_pressed = "#a26666", "#b27575", "#8d5858"
+            disabled_bg, disabled_fg = "#445160", "#bcc8d8"
+        else:
+            start_base, start_hover, start_pressed = "#5f8873", "#6e9782", "#527762"
+            pause_base, pause_hover, pause_pressed = "#557b69", "#638975", "#4a6c5c"
+            stop_base, stop_hover, stop_pressed = "#b06a6a", "#bf7878", "#9a5d5d"
+            disabled_bg, disabled_fg = "#cfd8e2", "#6b7786"
+        self._apply_button_palette(
+            self.btn_rec_start,
+            base=start_base,
+            hover=start_hover,
+            pressed=start_pressed,
+            disabled_bg=disabled_bg,
+            disabled_text=disabled_fg,
+        )
+        self._apply_button_palette(
+            self.btn_rec_pause,
+            base=pause_base,
+            hover=pause_hover,
+            pressed=pause_pressed,
+            disabled_bg=disabled_bg,
+            disabled_text=disabled_fg,
+        )
+        self._apply_button_palette(
+            self.btn_rec_stop,
+            base=stop_base,
+            hover=stop_hover,
+            pressed=stop_pressed,
+            disabled_bg=disabled_bg,
+            disabled_text=disabled_fg,
+        )
+
+    def _set_file_button_styles(self):
+        if not hasattr(self, "btn_select_file"):
+            return
+        if self.dark_mode:
+            select_base, select_hover, select_pressed = "#6f7f57", "#7d8e64", "#5f6d4a"
+            trans_base, trans_hover, trans_pressed = "#5e7d67", "#6d8c76", "#506b59"
+            disabled_bg, disabled_fg = "#445160", "#bcc8d8"
+        else:
+            select_base, select_hover, select_pressed = "#718a58", "#7f9965", "#60764a"
+            trans_base, trans_hover, trans_pressed = "#5f8872", "#6f9781", "#517764"
+            disabled_bg, disabled_fg = "#cfd8e2", "#6b7786"
+        self._apply_button_palette(
+            self.btn_select_file,
+            base=select_base,
+            hover=select_hover,
+            pressed=select_pressed,
+        )
+        self._apply_button_palette(
+            self.btn_transcribe_file,
+            base=trans_base,
+            hover=trans_hover,
+            pressed=trans_pressed,
+            disabled_bg=disabled_bg,
+            disabled_text=disabled_fg,
+        )
+
+    def _refresh_capture_button_styles(self):
+        self._set_listening_button_style(self.stt_service.is_listening())
+        self._set_recording_button_styles(self.stt_service.is_recording)
+        self._set_file_button_styles()
+
+    @staticmethod
+    def _apply_button_palette(
+        button: QPushButton,
+        *,
+        base: str,
+        hover: str,
+        pressed: str,
+        text: str = "#ffffff",
+        disabled_bg: Optional[str] = None,
+        disabled_text: str = "#ffffff",
+    ):
+        disabled_bg = disabled_bg or base
+        button.setStyleSheet(
             f"""
             QPushButton {{
                 background: {base};
-                color: #ffffff;
+                color: {text};
                 border: none;
                 border-radius: 6px;
                 padding: 6px 10px;
             }}
             QPushButton:hover {{ background: {hover}; }}
             QPushButton:pressed {{ background: {pressed}; }}
+            QPushButton:disabled {{
+                background: {disabled_bg};
+                color: {disabled_text};
+            }}
             """
         )
 
@@ -1080,34 +1608,49 @@ class MainWindow(QMainWindow):
     def _apply_theme(self):
         if self.dark_mode:
             stylesheet = """
-            QMainWindow { background: #10141a; }
-            QTabWidget::pane { border: 1px solid #2f3947; background: #161b22; border-radius: 8px; }
+            QMainWindow { background: #12161c; }
+            QTabWidget::pane { border: 1px solid #303b49; background: #1a1f27; border-radius: 8px; }
             QTabBar::tab {
-                background: #1c2430;
-                color: #d6deea;
-                border: 1px solid #2d3848;
+                background: #222a34;
+                color: #cfd7e4;
+                border: 1px solid #303b49;
                 padding: 6px 12px;
                 margin-right: 4px;
                 border-top-left-radius: 6px;
                 border-top-right-radius: 6px;
             }
-            QTabBar::tab:selected { background: #232d3a; border-bottom-color: #232d3a; color: #f0f5fb; }
-            QScrollArea#settingsScrollArea { background: #161b22; border: none; }
-            QScrollArea#settingsScrollArea > QWidget#qt_scrollarea_viewport { background: #161b22; }
-            QWidget#settingsScrollContent { background: #161b22; }
+            QTabBar::tab:selected { background: #2b3442; border-bottom-color: #2b3442; color: #eef3f8; }
+            QScrollArea#settingsScrollArea { background: #1a1f27; border: none; }
+            QScrollArea#settingsScrollArea > QWidget#qt_scrollarea_viewport { background: #1a1f27; }
+            QWidget#settingsScrollContent { background: #1a1f27; }
             QTextEdit, QLineEdit, QComboBox, QSpinBox, QDoubleSpinBox {
-                border: 1px solid #334155;
+                border: 1px solid #3a4554;
                 border-radius: 6px;
                 padding: 4px;
-                background: #0f1722;
-                color: #e5ecf6;
+                background: #131922;
+                color: #dce5f2;
             }
-            QPushButton { background: #3f7dac; color: #ffffff; border: none; border-radius: 6px; padding: 6px 10px; }
-            QPushButton:hover { background: #4c8dbf; }
-            QPushButton:pressed { background: #356f99; }
-            QLabel { color: #d6deea; }
-            QCheckBox { color: #d6deea; }
-            QStatusBar { background: #161b22; color: #d6deea; border-top: 1px solid #2f3947; }
+            QPushButton { background: #5a6d84; color: #f2f6fb; border: none; border-radius: 6px; padding: 6px 10px; }
+            QPushButton:hover { background: #667a92; }
+            QPushButton:pressed { background: #4d6076; }
+            QToolButton[role="tts-adjust"] {
+                background: #3a4656;
+                color: #9fb0c3;
+                border: 1px solid #4a5a6d;
+                border-radius: 6px;
+                padding: 4px 8px;
+                min-width: 22px;
+            }
+            QToolButton[role="tts-adjust"]:enabled {
+                background: #9a7a53;
+                color: #f6efe6;
+                border: 1px solid #ad8b64;
+            }
+            QToolButton[role="tts-adjust"]:enabled:hover { background: #a88964; }
+            QToolButton[role="tts-adjust"]:enabled:pressed { background: #856947; }
+            QLabel { color: #cfd7e4; }
+            QCheckBox { color: #cfd7e4; }
+            QStatusBar { background: #1a1f27; color: #cfd7e4; border-top: 1px solid #303b49; }
             """
         else:
             stylesheet = """
@@ -1127,10 +1670,21 @@ class MainWindow(QMainWindow):
             QPushButton { background: #2f6d9a; color: #ffffff; border: none; border-radius: 6px; padding: 6px 10px; }
             QPushButton:hover { background: #3c7cab; }
             QPushButton:pressed { background: #285f86; }
+            QToolButton[role="tts-adjust"] {
+                background: #e7eef6;
+                color: #1f3b53;
+                border: 1px solid #b8cadb;
+                border-radius: 6px;
+                padding: 4px 8px;
+                min-width: 22px;
+            }
+            QToolButton[role="tts-adjust"]:enabled:hover { background: #d7e5f3; }
+            QToolButton[role="tts-adjust"]:enabled:pressed { background: #c7daec; }
             QLabel { color: #1f3b53; }
             QCheckBox { color: #1f3b53; }
             """
         self.setStyleSheet(stylesheet)
+        self._refresh_capture_button_styles()
         self._update_minimum_width_for_tabs()
 
     def closeEvent(self, event):

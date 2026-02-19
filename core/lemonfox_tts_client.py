@@ -1,8 +1,10 @@
+import json
 import logging
 from typing import TYPE_CHECKING
 
 import httpx
 
+from core.audio_format import detect_audio_format
 from core.http_client import get_shared_client
 
 if TYPE_CHECKING:
@@ -53,6 +55,79 @@ class LemonFoxTTSClient:
     def _headers(self):
         return {"Authorization": f"Bearer {self.api_key}"}
 
+    @staticmethod
+    def _extract_message(value) -> str:
+        if isinstance(value, str):
+            return value.strip()
+        if isinstance(value, dict):
+            if "error" in value:
+                inner = LemonFoxTTSClient._extract_message(value.get("error"))
+                if inner:
+                    return inner
+            for key in ("message", "detail", "description"):
+                candidate = LemonFoxTTSClient._extract_message(value.get(key))
+                if candidate:
+                    return candidate
+            return ""
+        if isinstance(value, list):
+            for item in value:
+                candidate = LemonFoxTTSClient._extract_message(item)
+                if candidate:
+                    return candidate
+            return ""
+        return str(value or "").strip()
+
+    @staticmethod
+    def _decode_text_payload(content: bytes) -> str:
+        if not content:
+            return ""
+        snippet = content[:8192]
+        try:
+            text = snippet.decode("utf-8")
+        except UnicodeDecodeError:
+            return ""
+        stripped = text.strip()
+        if not stripped:
+            return ""
+        printable = sum(1 for ch in stripped if ch.isprintable() or ch in "\r\n\t")
+        ratio = printable / max(1, len(stripped))
+        if ratio < 0.9:
+            return ""
+        return stripped
+
+    @staticmethod
+    def _payload_message_from_text(text: str) -> str:
+        body = (text or "").strip()
+        if not body:
+            return ""
+        if body.startswith("{") or body.startswith("["):
+            try:
+                parsed = json.loads(body)
+                extracted = LemonFoxTTSClient._extract_message(parsed)
+                if extracted:
+                    return extracted
+            except (json.JSONDecodeError, TypeError, ValueError):
+                pass
+        return body
+
+    @staticmethod
+    def _http_error_message(resp: httpx.Response) -> str:
+        status_label = f"TTS request failed with HTTP {resp.status_code}"
+        text = LemonFoxTTSClient._decode_text_payload(resp.content)
+        detail = LemonFoxTTSClient._payload_message_from_text(text)
+        if detail:
+            return f"{status_label}: {detail}"
+        return status_label
+
+    @staticmethod
+    def _unexpected_non_audio_message(resp: httpx.Response) -> str:
+        text = LemonFoxTTSClient._decode_text_payload(resp.content)
+        detail = LemonFoxTTSClient._payload_message_from_text(text)
+        if not detail:
+            return ""
+        content_type = str(resp.headers.get("content-type", "")).strip() or "unknown content-type"
+        return f"TTS API returned {content_type} instead of audio: {detail}"
+
     def synthesize(self, text: str, model=None, voice=None, language=None, response_format=None, speed=None) -> bytes:
         if not text or not text.strip():
             raise ValueError("Text-to-speech input cannot be empty.")
@@ -88,9 +163,18 @@ class LemonFoxTTSClient:
                     headers=self._headers(),
                     json=payload,
                 )
-                resp.raise_for_status()
-                return resp.content
-            except httpx.HTTPError as e:
+                if resp.status_code >= 400:
+                    raise RuntimeError(self._http_error_message(resp))
+
+                audio_bytes = resp.content
+                if detect_audio_format(audio_bytes) != "unknown":
+                    return audio_bytes
+
+                unexpected_message = self._unexpected_non_audio_message(resp)
+                if unexpected_message:
+                    raise RuntimeError(unexpected_message)
+                return audio_bytes
+            except (httpx.HTTPError, RuntimeError) as e:
                 logger.warning("TTS request failed on %s: %s", endpoint, e)
                 last_error = e
                 continue
