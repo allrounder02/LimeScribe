@@ -1,69 +1,116 @@
 # CLAUDE.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
-
 ## Project
 
-LemonFox Voice Transcriber — a Windows 11 desktop app that transcribes speech to text using the LemonFox.ai API (Whisper large-v3). PyQt6 GUI with system tray icon. Three modes: Listening (VAD), Recording (manual), File transcription.
+**ZestVoice** — a Windows 11 desktop app (with optional headless/Docker mode) for speech-to-text, text-to-speech, and AI chat using the LemonFox.ai API. PyQt6 GUI with system tray icon. Also ships a CLI entry point for headless use.
 
 ## Development Environment
 
 - **Developed in WSL2**, runs natively on **Windows 11**
 - WSL2 cannot capture mic audio or display GUI — audio/GUI/hotkey testing must happen on Windows
-- WSL2 is used for code editing and unit-testable logic only
-- Python 3.12 venv at `.venv/`
+- WSL2 is fine for code editing, linting, and running `pytest`
+- Python 3.12, venv at `.venv/`
 
 ## Commands
 
 ```bash
-# Activate venv
 source .venv/bin/activate
-
-# Install dependencies
 pip install -r requirements.txt
 
-# Run the app (on Windows only — needs mic + display)
+# GUI (Windows only — needs mic + display)
 python app.py
-```
 
-No test framework is configured yet. When tests are added, they should go in a `tests/` directory and use `pytest`.
+# Headless CLI
+python cli.py
+
+# Tests
+pytest tests/
+```
 
 ## Architecture
 
 ```
-app.py                  # Entry point — QApplication + system tray
-ui/
-  main_window.py        # Main GUI window with mode tabs (Listening | Recording | File)
-  tray_icon.py          # QSystemTrayIcon + context menu
-  resources/            # Icons for tray states (idle, listening, recording)
+app.py                       # GUI entry point → ui/app_runtime.py
+cli.py                       # Headless CLI entry point → core/cli_runtime.py
+
+config.py                    # Settings loader (.env + settings.json), all defaults
+hotkeys.py                   # Global hotkey registration via pynput
+
 core/
-  lemonfox_client.py    # API wrapper — POST to LemonFox transcription endpoint
-  audio_recorder.py     # Mic capture via sounddevice, start/pause/stop → WAV bytes
-  vad_listener.py       # Continuous listening with webrtcvad + auto-chunking on pause
-  text_output.py        # Clipboard (pyperclip) + paste simulation (pyautogui)
-config.py               # Settings loader from .env via python-dotenv
-hotkeys.py              # Global hotkey registration via pynput
+  app_config.py              # Injectable AppConfig dataclass
+  http_client.py             # Shared httpx client (HTTP/2 connection pooling)
+  lemonfox_client.py         # STT API wrapper (POST audio → transcription)
+  lemonfox_tts_client.py     # TTS API wrapper (POST text → audio)
+  lemonfox_chat_client.py    # Chat completions API wrapper
+  transcription_service.py   # Pure-Python STT orchestration (no PyQt6)
+  tts_service.py             # Pure-Python TTS orchestration (no PyQt6)
+  dialogue_service.py        # Chat/dialogue orchestration
+  audio_recorder.py          # Mic capture via sounddevice → WAV bytes
+  vad_listener.py            # Continuous listening + webrtcvad auto-chunking
+  audio_format.py            # Audio format conversion utilities
+  audio_playback.py          # Cross-platform audio playback (sounddevice)
+  wav_playback.py            # WAV-specific playback helpers
+  tts_audio_output.py        # TTS audio output pipeline
+  tts_text.py                # Text pre-processing for TTS
+  text_output.py             # Clipboard (pyperclip) + paste simulation (pyautogui)
+  assets.py                  # Asset path resolution
+  cli_runtime.py             # Headless CLI runtime logic
+
+ui/
+  app_runtime.py             # QApplication bootstrap + system tray setup
+  main_window.py             # Main GUI window with mode tabs
+  settings_panel.py          # Settings UI panel
+  tts_panel.py               # TTS controls panel
+  dialogue_panel.py          # Chat/dialogue UI panel
+  tray_icon.py               # QSystemTrayIcon + context menu
+  hotkey_bridge.py           # Bridges pynput hotkeys ↔ Qt signals
+  icon_library.py            # Icon loading utilities
+
+assets/icons/                # Tray + UI icons
+
+tests/                       # pytest test suite
 ```
 
-### Data flow
-1. Audio in (mic via `sounddevice` or file from disk) → WAV bytes
-2. WAV bytes → `lemonfox_client.py` → POST to `https://api.lemonfox.ai/v1/audio/transcriptions` with Bearer token auth
-3. API response (transcribed text) → displayed in GUI text area + clipboard
-4. In Listening mode, `vad_listener.py` auto-detects speech pauses (~1.5s configurable) and sends chunks automatically
+### Data Flow
 
-### API
-- Endpoint: `POST https://api.lemonfox.ai/v1/audio/transcriptions`
-- Auth: `Authorization: Bearer <key>` (key stored in `.env` as `LEMONFOX_API_KEY`)
-- OpenAI-compatible interface, supports file upload
-- Accepted formats: MP3, WAV, FLAC, M4A, OGG
+1. **STT**: Audio in (mic via `sounddevice` or file) → WAV bytes → `lemonfox_client.py` → LemonFox API → transcribed text → GUI + clipboard
+2. **VAD/Listening mode**: `vad_listener.py` auto-detects speech pauses and sends chunks automatically
+3. **TTS**: Text → `lemonfox_tts_client.py` → LemonFox TTS API → audio bytes → `audio_playback.py` → speakers
+4. **Chat**: User message → `lemonfox_chat_client.py` → LemonFox Chat API → response text
 
-## Build Order
+### APIs
 
-Implementation follows the sequence in `PLAN.md`. Progress is tracked in `REPORTS.md` with timestamps. The build order starts with `lemonfox_client.py`, then `audio_recorder.py`, then a CLI smoke test, then GUI shell, and progressively wires up each mode.
+All endpoints are OpenAI-compatible and configurable via `.env`:
+
+| Service | Default URL | Auth |
+|---------|------------|------|
+| STT | `https://api.lemonfox.ai/v1/audio/transcriptions` | Bearer `LEMONFOX_API_KEY` |
+| TTS | `https://api.lemonfox.ai/v1/audio/speech` | Bearer `LEMONFOX_API_KEY` |
+| Chat | `https://api.lemonfox.ai/v1/chat/completions` | Bearer `LEMONFOX_API_KEY` |
+
+Each service has a configurable fallback URL.
+
+## Configuration
+
+- **`.env`** — API keys and defaults (gitignored, see `.env.example`)
+- **`settings.json`** — Runtime user preferences, persisted by the app (gitignored)
+- **`config.py`** — Loads both sources; provides `load_app_settings()` / `save_app_settings()`
+- Supports multiple STT profiles and TTS voice profiles
 
 ## Key Constraints
 
-- `.env` contains the API key and is gitignored — never commit it
-- Audio files (`.wav`, `.mp3`, etc.) are gitignored
-- `pyautogui` and `pynput` require a real Windows display — they will fail in WSL2/headless
-- `webrtcvad` requires 16-bit PCM audio at 8000, 16000, or 32000 Hz sample rates
+- `.env` and `settings.json` are gitignored — never commit them
+- Audio files (`.wav`, `.mp3`, `.flac`, `.m4a`, `.ogg`) are gitignored
+- `pyautogui` and `pynput` require a real Windows display — they fail in WSL2/headless
+- `webrtcvad` requires 16-bit PCM at 8000, 16000, or 32000 Hz
+- `httpx` with HTTP/2 is used instead of `requests` for connection pooling
+- `core/` modules are kept free of PyQt6 imports so they work in headless/CLI mode
+- UI modules live in `ui/` and may import PyQt6
+
+## Dependencies
+
+Core (all modes): `httpx[http2]`, `sounddevice`, `numpy`, `webrtcvad`/`webrtcvad-wheels`, `python-dotenv`
+
+GUI-only: `PyQt6`, `pyperclip`, `pyautogui`, `pynput`
+
+See `requirements.txt` for exact specifiers. A separate `requirements_mac.txt` exists for macOS.

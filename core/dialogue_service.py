@@ -68,6 +68,54 @@ class DialogueService:
         with self._lock:
             self._reset_history_locked()
 
+    def send_stream(self, text: str, on_delta: Callable[[str], None] | None = None):
+        """Send a message and stream the response, calling on_delta for each chunk.
+
+        Runs synchronously (caller should use a background thread).
+        Appends the full response to history when done, then fires on_reply.
+        """
+        message = (text or "").strip()
+        if not message:
+            if self._on_error:
+                self._on_error("Dialogue message cannot be empty.")
+            return
+
+        appended_user = False
+        try:
+            with self._lock:
+                if self._include_history:
+                    self._history.append({"role": "user", "content": message})
+                    appended_user = True
+                    request_messages = [dict(msg) for msg in self._history]
+                else:
+                    request_messages: list[dict] = []
+                    if self._system_prompt:
+                        request_messages.append({"role": "system", "content": self._system_prompt})
+                    request_messages.append({"role": "user", "content": message})
+
+            accumulated = []
+            for delta in self.client.complete_stream(request_messages):
+                accumulated.append(delta)
+                if on_delta:
+                    on_delta(delta)
+
+            full_text = "".join(accumulated)
+            with self._lock:
+                if self._include_history:
+                    self._history.append({"role": "assistant", "content": full_text})
+
+            if self._on_reply:
+                self._on_reply(full_text)
+        except Exception as e:
+            logger.error("Dialogue stream failed: %s", e)
+            with self._lock:
+                if appended_user and self._history:
+                    last = self._history[-1]
+                    if last.get("role") == "user" and last.get("content") == message:
+                        self._history.pop()
+            if self._on_error:
+                self._on_error(str(e))
+
     def send(self, text: str):
         message = (text or "").strip()
         if not message:

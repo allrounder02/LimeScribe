@@ -100,11 +100,14 @@ def _build_hotkeys(window: MainWindow, settings: dict) -> HotkeyManager:
     bridge = HotkeyBridge(parent=window)
     bridge.listen_requested.connect(window.toggle_listening_from_external)
     bridge.record_requested.connect(window.toggle_recording_from_external)
+    bridge.dialogue_requested.connect(window.toggle_voice_dialogue_from_external)
     return HotkeyManager(
         on_listen_toggle=bridge.emit_listen_requested,
         on_record_toggle=bridge.emit_record_requested,
+        on_dialogue_toggle=bridge.emit_dialogue_requested,
         listen_hotkey=settings["hotkey_listen"],
         record_hotkey=settings["hotkey_record"],
+        dialogue_hotkey=settings.get("hotkey_dialogue", "Ctrl+Alt+D"),
     )
 
 

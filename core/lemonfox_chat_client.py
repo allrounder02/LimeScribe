@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import json
 import logging
+from collections.abc import Iterator
 from typing import TYPE_CHECKING
 
 import httpx
@@ -46,6 +48,66 @@ class LemonFoxChatClient:
 
     def _headers(self):
         return {"Authorization": f"Bearer {self.api_key}"}
+
+    def complete_stream(self, messages: list[dict], model: str | None = None) -> Iterator[str]:
+        """Stream chat completions via SSE, yielding content deltas."""
+        if not isinstance(messages, list) or not messages:
+            raise ValueError("Chat messages must be a non-empty list.")
+
+        payload = {
+            "model": (model or self.model or "").strip(),
+            "messages": messages,
+            "stream": True,
+        }
+        if not payload["model"]:
+            raise ValueError("Chat model cannot be empty.")
+
+        endpoints = [self.chat_url]
+        if self.fallback_url and self.fallback_url != self.chat_url:
+            endpoints.append(self.fallback_url)
+
+        last_error = None
+        for endpoint in endpoints:
+            try:
+                logger.debug(
+                    "Chat stream request -> %s | model=%s messages=%d",
+                    endpoint,
+                    payload["model"],
+                    len(payload["messages"]),
+                )
+                yield from self._stream_sse(endpoint, payload)
+                return
+            except httpx.HTTPError as e:
+                logger.warning("Chat stream failed on %s: %s", endpoint, e)
+                last_error = e
+                continue
+
+        if last_error:
+            raise last_error
+        raise RuntimeError("Chat stream request failed without an explicit error.")
+
+    def _stream_sse(self, endpoint: str, payload: dict) -> Iterator[str]:
+        """Open an SSE stream and yield content deltas until [DONE]."""
+        client = get_shared_client()
+        with client.stream("POST", endpoint, headers=self._headers(), json=payload) as resp:
+            resp.raise_for_status()
+            for line in resp.iter_lines():
+                if not line.startswith("data:"):
+                    continue
+                data = line[len("data:"):].strip()
+                if data == "[DONE]":
+                    return
+                try:
+                    chunk = json.loads(data)
+                except (json.JSONDecodeError, ValueError):
+                    continue
+                choices = chunk.get("choices")
+                if not isinstance(choices, list) or not choices:
+                    continue
+                delta = choices[0].get("delta", {})
+                content = delta.get("content")
+                if content:
+                    yield content
 
     def complete(self, messages: list[dict], model: str | None = None) -> str:
         if not isinstance(messages, list) or not messages:

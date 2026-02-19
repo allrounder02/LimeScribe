@@ -579,7 +579,7 @@ class SettingsPanel(QWidget):
         record_hotkey = self.input_record_hotkey.text().strip()
         try:
             self.hotkeys.update_hotkeys(listen_hotkey, record_hotkey)
-            applied_listen, applied_record = self.hotkeys.get_hotkeys()
+            applied_listen, applied_record, _applied_dialogue = self.hotkeys.get_hotkeys()
             self.input_listen_hotkey.setText(applied_listen)
             self.input_record_hotkey.setText(applied_record)
             self.hotkeys_save_requested.emit(applied_listen, applied_record)

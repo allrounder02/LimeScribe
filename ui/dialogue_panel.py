@@ -29,6 +29,9 @@ class DialoguePanel(QWidget):
     model_changed = pyqtSignal(str)
     system_prompt_changed = pyqtSignal(str)
     history_mode_changed = pyqtSignal(bool)
+    voice_start_requested = pyqtSignal()
+    voice_stop_requested = pyqtSignal()
+    auto_listen_changed = pyqtSignal(bool)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -65,6 +68,25 @@ class DialoguePanel(QWidget):
         self.text_dialogue.setReadOnly(True)
         self.text_dialogue.setPlaceholderText("Conversation will appear here.")
         layout.addWidget(self.text_dialogue)
+
+        # Voice dialogue controls
+        voice_row = QHBoxLayout()
+        self.btn_voice_toggle = QPushButton("Talk")
+        self.btn_voice_toggle.setIcon(ui_icon(self, "tab_listening"))
+        self.btn_voice_toggle.setCheckable(True)
+        self.btn_voice_toggle.clicked.connect(self._on_voice_toggled)
+        voice_row.addWidget(self.btn_voice_toggle)
+
+        self.chk_auto_listen = QCheckBox("Auto-listen")
+        self.chk_auto_listen.setChecked(True)
+        self.chk_auto_listen.setToolTip("Automatically listen for the next turn after the assistant speaks")
+        self.chk_auto_listen.toggled.connect(self.auto_listen_changed.emit)
+        voice_row.addWidget(self.chk_auto_listen)
+
+        self.lbl_voice_state = QLabel("")
+        voice_row.addWidget(self.lbl_voice_state)
+        voice_row.addStretch()
+        layout.addLayout(voice_row)
 
         layout.addWidget(QLabel("Your Message"))
         self.input_message = QTextEdit()
@@ -165,6 +187,29 @@ class DialoguePanel(QWidget):
 
     def append_error(self, text: str):
         self._append_message("Error", text)
+
+    def _on_voice_toggled(self, checked: bool):
+        if checked:
+            self.voice_start_requested.emit()
+        else:
+            self.voice_stop_requested.emit()
+
+    def set_voice_state(self, label: str):
+        self.lbl_voice_state.setText(label)
+
+    def set_voice_active(self, active: bool):
+        self.btn_voice_toggle.blockSignals(True)
+        self.btn_voice_toggle.setChecked(active)
+        self.btn_voice_toggle.setText("Stop" if active else "Talk")
+        self.btn_voice_toggle.blockSignals(False)
+        # Disable text input while voice is active
+        self.input_message.setEnabled(not active)
+        self.btn_send.setEnabled(not active)
+
+    def set_voice_auto_listen(self, enabled: bool):
+        self.chk_auto_listen.blockSignals(True)
+        self.chk_auto_listen.setChecked(enabled)
+        self.chk_auto_listen.blockSignals(False)
 
     def _append_message(self, role: str, text: str):
         body = (text or "").strip()

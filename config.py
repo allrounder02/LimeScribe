@@ -8,6 +8,7 @@ load_dotenv()
 # Hotkey defaults defined here to avoid circular import with hotkeys.py
 DEFAULT_HOTKEY_LISTEN = "Ctrl+Alt+L"
 DEFAULT_HOTKEY_RECORD = "Ctrl+Alt+R"
+DEFAULT_HOTKEY_DIALOGUE = "Ctrl+Alt+D"
 
 LEMONFOX_API_KEY = os.getenv("LEMONFOX_API_KEY", "")
 LEMONFOX_LANGUAGE = os.getenv("LEMONFOX_LANGUAGE", "english")
@@ -66,6 +67,7 @@ _OUTPUT_HISTORY_LIMIT = 3
 DEFAULT_SETTINGS = {
     "hotkey_listen": DEFAULT_HOTKEY_LISTEN,
     "hotkey_record": DEFAULT_HOTKEY_RECORD,
+    "hotkey_dialogue": DEFAULT_HOTKEY_DIALOGUE,
     "stt_language": LEMONFOX_LANGUAGE,
     "stt_response_format": LEMONFOX_RESPONSE_FORMAT,
     "auto_copy_transcription": True,

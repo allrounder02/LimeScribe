@@ -8,10 +8,14 @@ class HotkeyBridge(QObject):
 
     listen_requested = pyqtSignal()
     record_requested = pyqtSignal()
+    dialogue_requested = pyqtSignal()
 
     def emit_listen_requested(self):
         self.listen_requested.emit()
 
     def emit_record_requested(self):
         self.record_requested.emit()
+
+    def emit_dialogue_requested(self):
+        self.dialogue_requested.emit()
 

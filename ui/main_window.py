@@ -18,6 +18,7 @@ from core.dialogue_service import DialogueService
 from core.transcription_service import TranscriptionService
 from core.tts_service import TTSService
 from core.text_output import copy_to_clipboard
+from core.voice_dialogue import VoiceDialogueOrchestrator, VoiceDialogueState
 from core.wav_playback import WavPlaybackController
 from ui.dialogue_panel import DialoguePanel
 from ui.icon_library import ui_icon
@@ -39,6 +40,11 @@ class MainWindow(QMainWindow):
     _tts_error = pyqtSignal(str)
     _dialogue_reply = pyqtSignal(str)
     _dialogue_error = pyqtSignal(str)
+    _voice_state_changed = pyqtSignal(str)
+    _voice_user_transcript = pyqtSignal(str)
+    _voice_assistant_text = pyqtSignal(str)
+    _voice_error = pyqtSignal(str)
+    _voice_turn_complete = pyqtSignal()
 
     def __init__(self, config: Optional[AppConfig] = None):
         super().__init__()
@@ -70,12 +76,27 @@ class MainWindow(QMainWindow):
         self._tts_ui_timer.timeout.connect(self._refresh_tts_playback_ui)
 
         # Connect signals to UI handlers (runs on main thread)
+        self.voice_dialogue = VoiceDialogueOrchestrator(
+            config=self._config,
+            dialogue_service=self.dialogue_service,
+            on_state_changed=self._voice_state_changed.emit,
+            on_user_transcript=self._voice_user_transcript.emit,
+            on_assistant_text=self._voice_assistant_text.emit,
+            on_error=self._voice_error.emit,
+            on_turn_complete=self._voice_turn_complete.emit,
+        )
+
         self._transcription_ready.connect(self._on_transcription_done)
         self._transcription_error.connect(self._on_transcription_error)
         self._tts_audio_ready.connect(self._on_tts_done_play)
         self._tts_error.connect(self._on_tts_error)
         self._dialogue_reply.connect(self._on_dialogue_reply)
         self._dialogue_error.connect(self._on_dialogue_error)
+        self._voice_state_changed.connect(self._on_voice_state_changed)
+        self._voice_user_transcript.connect(self._on_voice_user_transcript)
+        self._voice_assistant_text.connect(self._on_voice_assistant_text)
+        self._voice_error.connect(self._on_voice_error)
+        self._voice_turn_complete.connect(self._on_voice_turn_complete)
 
         self.tray = None
         self._on_hotkeys_changed = None
@@ -138,6 +159,9 @@ class MainWindow(QMainWindow):
         self.dialogue_panel.model_changed.connect(self._on_dialogue_model_changed)
         self.dialogue_panel.system_prompt_changed.connect(self._on_dialogue_system_prompt_changed)
         self.dialogue_panel.history_mode_changed.connect(self._on_dialogue_history_mode_changed)
+        self.dialogue_panel.voice_start_requested.connect(self._on_voice_start)
+        self.dialogue_panel.voice_stop_requested.connect(self._on_voice_stop)
+        self.dialogue_panel.auto_listen_changed.connect(self._on_voice_auto_listen_changed)
         self.dialogue_panel.set_model(self.dialogue_service.client.model, emit=False)
         self.dialogue_panel.set_system_prompt(self.dialogue_service.system_prompt, emit=False)
         self.dialogue_panel.set_include_history(self.dialogue_service.include_history, emit=False)
@@ -229,7 +253,7 @@ class MainWindow(QMainWindow):
 
     def attach_hotkey_manager(self, hotkeys, on_hotkeys_changed=None):
         self._on_hotkeys_changed = on_hotkeys_changed
-        listen_hotkey, record_hotkey = hotkeys.get_hotkeys()
+        listen_hotkey, record_hotkey, _dialogue_hotkey = hotkeys.get_hotkeys()
         self.settings_panel.attach_hotkey_manager(hotkeys, listen_hotkey, record_hotkey)
 
     def attach_stt_settings(self, settings: dict, on_stt_settings_changed=None):
@@ -1127,6 +1151,67 @@ class MainWindow(QMainWindow):
         else:
             self.statusBar().showMessage("Dialogue now sends each message independently")
 
+    # ── Voice dialogue ──────────────────────────────────────────────
+
+    def _on_voice_start(self):
+        model = self.dialogue_panel.get_model()
+        system_prompt = self.dialogue_panel.get_system_prompt()
+        include_history = self.dialogue_panel.should_include_history()
+        self.dialogue_service.update_settings(
+            model=model,
+            system_prompt=system_prompt,
+            include_history=include_history,
+        )
+        self.dialogue_panel.set_voice_active(True)
+        self.voice_dialogue.start()
+        self.statusBar().showMessage("Voice dialogue started")
+
+    def _on_voice_stop(self):
+        self.voice_dialogue.stop()
+        self.dialogue_panel.set_voice_active(False)
+        self.dialogue_panel.set_voice_state("")
+        self.statusBar().showMessage("Voice dialogue stopped")
+
+    def _on_voice_auto_listen_changed(self, enabled: bool):
+        self.voice_dialogue.auto_listen = enabled
+
+    _VOICE_STATE_LABELS = {
+        "IDLE": "",
+        "LISTENING": "Listening...",
+        "TRANSCRIBING": "Transcribing...",
+        "THINKING": "Thinking...",
+        "SPEAKING": "Speaking...",
+        "CANCELLING": "Stopping...",
+    }
+
+    def _on_voice_state_changed(self, state_name: str):
+        label = self._VOICE_STATE_LABELS.get(state_name, "")
+        self.dialogue_panel.set_voice_state(label)
+        if state_name == "IDLE":
+            self.dialogue_panel.set_voice_active(False)
+
+    def _on_voice_user_transcript(self, text: str):
+        self.dialogue_panel.append_user(text)
+
+    def _on_voice_assistant_text(self, text: str):
+        self.dialogue_panel.append_assistant(text)
+
+    def _on_voice_error(self, err: str):
+        logger.error("Voice dialogue error: %s", err)
+        self.dialogue_panel.append_error(err)
+        self.statusBar().showMessage(f"Voice dialogue error: {err}")
+
+    def _on_voice_turn_complete(self):
+        self.statusBar().showMessage("Voice dialogue turn complete")
+
+    def toggle_voice_dialogue_from_external(self):
+        self.show_and_focus()
+        self.tabs.setCurrentIndex(2)  # Dialogue tab
+        if self.voice_dialogue.state == VoiceDialogueState.IDLE:
+            self._on_voice_start()
+        else:
+            self._on_voice_stop()
+
     def _persist_dialogue_settings(self, payload: dict):
         if self._on_dialogue_settings_changed:
             self._on_dialogue_settings_changed(payload)
@@ -1688,6 +1773,7 @@ class MainWindow(QMainWindow):
         self._update_minimum_width_for_tabs()
 
     def closeEvent(self, event):
+        self.voice_dialogue.stop()
         self._tts_ui_timer.stop()
         self.tts_playback.close()
         event.accept()
