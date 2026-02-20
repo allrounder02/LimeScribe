@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import re
 import threading
 from typing import Callable, Optional
 
@@ -10,6 +11,7 @@ from core.app_config import AppConfig
 from core.lemonfox_chat_client import LemonFoxChatClient
 
 logger = logging.getLogger(__name__)
+_WORD_RE = re.compile(r"\S+")
 
 
 class DialogueService:
@@ -68,7 +70,13 @@ class DialogueService:
         with self._lock:
             self._reset_history_locked()
 
-    def send_stream(self, text: str, on_delta: Callable[[str], None] | None = None):
+    def send_stream(
+        self,
+        text: str,
+        on_delta: Callable[[str], None] | None = None,
+        cancel_event: threading.Event | None = None,
+        max_words: int | None = None,
+    ):
         """Send a message and stream the response, calling on_delta for each chunk.
 
         Runs synchronously (caller should use a background thread).
@@ -93,18 +101,41 @@ class DialogueService:
                         request_messages.append({"role": "system", "content": self._system_prompt})
                     request_messages.append({"role": "user", "content": message})
 
-            accumulated = []
-            for delta in self.client.complete_stream(request_messages):
-                accumulated.append(delta)
-                if on_delta:
-                    on_delta(delta)
+            accumulated = ""
+            limit = int(max_words) if max_words is not None else 0
+            if limit < 0:
+                limit = 0
 
-            full_text = "".join(accumulated)
+            stream_cancelled = False
+            for delta in self.client.complete_stream(request_messages, cancel_event=cancel_event):
+                if cancel_event is not None and cancel_event.is_set():
+                    stream_cancelled = True
+                    break
+
+                candidate = accumulated + str(delta or "")
+                if limit > 0:
+                    trimmed = self._truncate_to_words(candidate, limit)
+                    emitted = trimmed[len(accumulated):]
+                    accumulated = trimmed
+                    if emitted and on_delta:
+                        on_delta(emitted)
+                    if len(trimmed) < len(candidate):
+                        # Word limit reached; stop generation for a shorter assistant turn.
+                        break
+                else:
+                    accumulated = candidate
+                    if on_delta:
+                        on_delta(delta)
+
+            if cancel_event is not None and cancel_event.is_set():
+                stream_cancelled = True
+
+            full_text = accumulated.strip()
             with self._lock:
-                if self._include_history:
+                if self._include_history and full_text and not stream_cancelled:
                     self._history.append({"role": "assistant", "content": full_text})
 
-            if self._on_reply:
+            if self._on_reply and not stream_cancelled:
                 self._on_reply(full_text)
         except Exception as e:
             logger.error("Dialogue stream failed: %s", e)
@@ -160,3 +191,14 @@ class DialogueService:
         self._history = []
         if self._system_prompt:
             self._history.append({"role": "system", "content": self._system_prompt})
+
+    @staticmethod
+    def _truncate_to_words(text: str, max_words: int) -> str:
+        if max_words <= 0:
+            return ""
+        count = 0
+        for match in _WORD_RE.finditer(text or ""):
+            count += 1
+            if count == max_words:
+                return text[:match.end()]
+        return str(text or "")

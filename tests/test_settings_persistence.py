@@ -21,6 +21,8 @@ class SettingsPersistenceTests(unittest.TestCase):
             self.assertEqual(loaded["chat_model"], config.LEMONFOX_CHAT_MODEL)
             self.assertEqual(loaded["chat_system_prompt"], config.LEMONFOX_CHAT_SYSTEM_PROMPT)
             self.assertTrue(loaded["chat_include_history"])
+            self.assertEqual(loaded["voice_max_words_auto_listen"], config.VOICE_MAX_WORDS_AUTO_LISTEN)
+            self.assertEqual(loaded["voice_max_words_manual"], config.VOICE_MAX_WORDS_MANUAL)
             self.assertEqual(loaded["output_history"], [])
 
     def test_save_and_reload_tts_optimization_fields(self):
@@ -65,6 +67,8 @@ class SettingsPersistenceTests(unittest.TestCase):
                         "chat_model": "llama-70b-chat",
                         "chat_system_prompt": "You are concise.",
                         "chat_include_history": False,
+                        "voice_max_words_auto_listen": 120,
+                        "voice_max_words_manual": 60,
                     }
                 )
                 loaded = config.load_app_settings()
@@ -72,6 +76,8 @@ class SettingsPersistenceTests(unittest.TestCase):
             self.assertEqual(loaded["chat_model"], "llama-70b-chat")
             self.assertEqual(loaded["chat_system_prompt"], "You are concise.")
             self.assertFalse(loaded["chat_include_history"])
+            self.assertEqual(loaded["voice_max_words_auto_listen"], 120)
+            self.assertEqual(loaded["voice_max_words_manual"], 60)
 
     def test_output_history_roundtrip_is_sanitized_and_limited(self):
         with tempfile.TemporaryDirectory() as tmp_dir:

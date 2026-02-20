@@ -49,7 +49,12 @@ class LemonFoxChatClient:
     def _headers(self):
         return {"Authorization": f"Bearer {self.api_key}"}
 
-    def complete_stream(self, messages: list[dict], model: str | None = None) -> Iterator[str]:
+    def complete_stream(
+        self,
+        messages: list[dict],
+        model: str | None = None,
+        cancel_event=None,
+    ) -> Iterator[str]:
         """Stream chat completions via SSE, yielding content deltas."""
         if not isinstance(messages, list) or not messages:
             raise ValueError("Chat messages must be a non-empty list.")
@@ -75,7 +80,7 @@ class LemonFoxChatClient:
                     payload["model"],
                     len(payload["messages"]),
                 )
-                yield from self._stream_sse(endpoint, payload)
+                yield from self._stream_sse(endpoint, payload, cancel_event=cancel_event)
                 return
             except httpx.HTTPError as e:
                 logger.warning("Chat stream failed on %s: %s", endpoint, e)
@@ -86,12 +91,17 @@ class LemonFoxChatClient:
             raise last_error
         raise RuntimeError("Chat stream request failed without an explicit error.")
 
-    def _stream_sse(self, endpoint: str, payload: dict) -> Iterator[str]:
+    def _stream_sse(self, endpoint: str, payload: dict, cancel_event=None) -> Iterator[str]:
         """Open an SSE stream and yield content deltas until [DONE]."""
+        if cancel_event is not None and cancel_event.is_set():
+            return
+
         client = get_shared_client()
         with client.stream("POST", endpoint, headers=self._headers(), json=payload) as resp:
             resp.raise_for_status()
             for line in resp.iter_lines():
+                if cancel_event is not None and cancel_event.is_set():
+                    return
                 if not line.startswith("data:"):
                     continue
                 data = line[len("data:"):].strip()

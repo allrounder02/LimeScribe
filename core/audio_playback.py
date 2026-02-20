@@ -15,6 +15,12 @@ _stop_event = threading.Event()
 _playback_thread: threading.Thread | None = None
 
 
+def is_playback_active() -> bool:
+    """Return True while the background playback worker is still running."""
+    with _playback_lock:
+        return bool(_playback_thread and _playback_thread.is_alive())
+
+
 def play_wav_bytes(audio_bytes: bytes):
     """Play WAV audio bytes asynchronously (cross-platform via sounddevice).
 

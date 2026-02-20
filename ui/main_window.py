@@ -162,9 +162,15 @@ class MainWindow(QMainWindow):
         self.dialogue_panel.voice_start_requested.connect(self._on_voice_start)
         self.dialogue_panel.voice_stop_requested.connect(self._on_voice_stop)
         self.dialogue_panel.auto_listen_changed.connect(self._on_voice_auto_listen_changed)
+        self.dialogue_panel.voice_word_limits_changed.connect(self._on_voice_word_limits_changed)
         self.dialogue_panel.set_model(self.dialogue_service.client.model, emit=False)
         self.dialogue_panel.set_system_prompt(self.dialogue_service.system_prompt, emit=False)
         self.dialogue_panel.set_include_history(self.dialogue_service.include_history, emit=False)
+        self.dialogue_panel.set_voice_word_limits(
+            self.voice_dialogue.max_words_auto_listen,
+            self.voice_dialogue.max_words_manual,
+            emit=False,
+        )
         self.tabs.addTab(self.dialogue_panel, "Dialogue")
         self.tabs.setTabIcon(2, ui_icon(self, "tab_dialogue"))
 
@@ -298,10 +304,21 @@ class MainWindow(QMainWindow):
         model = str(settings.get("chat_model", self.dialogue_service.client.model)).strip()
         system_prompt = str(settings.get("chat_system_prompt", self.dialogue_service.system_prompt)).strip()
         include_history = bool(settings.get("chat_include_history", True))
+        auto_words = settings.get("voice_max_words_auto_listen", self.voice_dialogue.max_words_auto_listen)
+        manual_words = settings.get("voice_max_words_manual", self.voice_dialogue.max_words_manual)
 
         self.dialogue_panel.set_model(model, emit=False)
         self.dialogue_panel.set_system_prompt(system_prompt, emit=False)
         self.dialogue_panel.set_include_history(include_history, emit=False)
+        self.voice_dialogue.set_response_word_limits(
+            max_words_auto_listen=auto_words,
+            max_words_manual=manual_words,
+        )
+        self.dialogue_panel.set_voice_word_limits(
+            self.voice_dialogue.max_words_auto_listen,
+            self.voice_dialogue.max_words_manual,
+            emit=False,
+        )
         self.dialogue_service.update_settings(
             model=model,
             system_prompt=system_prompt,
@@ -1174,6 +1191,19 @@ class MainWindow(QMainWindow):
 
     def _on_voice_auto_listen_changed(self, enabled: bool):
         self.voice_dialogue.auto_listen = enabled
+
+    def _on_voice_word_limits_changed(self, auto_words: int, manual_words: int):
+        self.voice_dialogue.set_response_word_limits(
+            max_words_auto_listen=auto_words,
+            max_words_manual=manual_words,
+        )
+        self._persist_dialogue_settings(
+            {
+                "voice_max_words_auto_listen": self.voice_dialogue.max_words_auto_listen,
+                "voice_max_words_manual": self.voice_dialogue.max_words_manual,
+            }
+        )
+        self.statusBar().showMessage("Voice response length limits updated")
 
     _VOICE_STATE_LABELS = {
         "IDLE": "",

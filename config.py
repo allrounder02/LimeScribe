@@ -47,6 +47,8 @@ LEMONFOX_CHAT_FALLBACK_URL = os.getenv(
 )
 LEMONFOX_CHAT_MODEL = os.getenv("LEMONFOX_CHAT_MODEL", "llama-8b-chat")
 LEMONFOX_CHAT_SYSTEM_PROMPT = os.getenv("LEMONFOX_CHAT_SYSTEM_PROMPT", "You are a helpful assistant.")
+VOICE_MAX_WORDS_AUTO_LISTEN = int(os.getenv("VOICE_MAX_WORDS_AUTO_LISTEN", "100"))
+VOICE_MAX_WORDS_MANUAL = int(os.getenv("VOICE_MAX_WORDS_MANUAL", "50"))
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").upper()
 LOG_FILE = os.getenv("LOG_FILE", "").strip()
 
@@ -87,6 +89,8 @@ DEFAULT_SETTINGS = {
     "chat_model": LEMONFOX_CHAT_MODEL,
     "chat_system_prompt": LEMONFOX_CHAT_SYSTEM_PROMPT,
     "chat_include_history": True,
+    "voice_max_words_auto_listen": VOICE_MAX_WORDS_AUTO_LISTEN,
+    "voice_max_words_manual": VOICE_MAX_WORDS_MANUAL,
     "active_tts_profile": _DEFAULT_TTS_PROFILE_NAME,
     "tts_profiles": [
         {

@@ -12,6 +12,7 @@ from PyQt6.QtWidgets import (
     QLabel,
     QLineEdit,
     QPushButton,
+    QSpinBox,
     QTextEdit,
     QVBoxLayout,
     QWidget,
@@ -32,6 +33,7 @@ class DialoguePanel(QWidget):
     voice_start_requested = pyqtSignal()
     voice_stop_requested = pyqtSignal()
     auto_listen_changed = pyqtSignal(bool)
+    voice_word_limits_changed = pyqtSignal(int, int)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -87,6 +89,23 @@ class DialoguePanel(QWidget):
         voice_row.addWidget(self.lbl_voice_state)
         voice_row.addStretch()
         layout.addLayout(voice_row)
+
+        word_limit_row = QHBoxLayout()
+        word_limit_row.addWidget(QLabel("Max words (Auto)"))
+        self.spin_voice_max_words_auto = QSpinBox()
+        self.spin_voice_max_words_auto.setRange(10, 500)
+        self.spin_voice_max_words_auto.setValue(100)
+        self.spin_voice_max_words_auto.valueChanged.connect(self._emit_word_limits_changed)
+        word_limit_row.addWidget(self.spin_voice_max_words_auto)
+        word_limit_row.addSpacing(14)
+        word_limit_row.addWidget(QLabel("Max words (Manual)"))
+        self.spin_voice_max_words_manual = QSpinBox()
+        self.spin_voice_max_words_manual.setRange(10, 500)
+        self.spin_voice_max_words_manual.setValue(50)
+        self.spin_voice_max_words_manual.valueChanged.connect(self._emit_word_limits_changed)
+        word_limit_row.addWidget(self.spin_voice_max_words_manual)
+        word_limit_row.addStretch()
+        layout.addLayout(word_limit_row)
 
         layout.addWidget(QLabel("Your Message"))
         self.input_message = QTextEdit()
@@ -210,6 +229,24 @@ class DialoguePanel(QWidget):
         self.chk_auto_listen.blockSignals(True)
         self.chk_auto_listen.setChecked(enabled)
         self.chk_auto_listen.blockSignals(False)
+
+    def set_voice_word_limits(self, auto_words: int, manual_words: int, emit: bool = False):
+        auto_val = max(10, min(500, int(auto_words)))
+        manual_val = max(10, min(500, int(manual_words)))
+        self.spin_voice_max_words_auto.blockSignals(True)
+        self.spin_voice_max_words_manual.blockSignals(True)
+        self.spin_voice_max_words_auto.setValue(auto_val)
+        self.spin_voice_max_words_manual.setValue(manual_val)
+        self.spin_voice_max_words_auto.blockSignals(False)
+        self.spin_voice_max_words_manual.blockSignals(False)
+        if emit:
+            self.voice_word_limits_changed.emit(auto_val, manual_val)
+
+    def _emit_word_limits_changed(self, _value: int):
+        self.voice_word_limits_changed.emit(
+            int(self.spin_voice_max_words_auto.value()),
+            int(self.spin_voice_max_words_manual.value()),
+        )
 
     def _append_message(self, role: str, text: str):
         body = (text or "").strip()
