@@ -28,15 +28,18 @@ class DialoguePanel(QWidget):
     reset_requested = pyqtSignal()
     use_output_requested = pyqtSignal()
     model_changed = pyqtSignal(str)
+    voice_profile_changed = pyqtSignal(str)
     system_prompt_changed = pyqtSignal(str)
     history_mode_changed = pyqtSignal(bool)
     voice_start_requested = pyqtSignal()
     voice_stop_requested = pyqtSignal()
     auto_listen_changed = pyqtSignal(bool)
     voice_word_limits_changed = pyqtSignal(int, int)
+    voice_speaker_mode_changed = pyqtSignal(bool)
 
     def __init__(self, parent=None):
         super().__init__(parent)
+        self._updating_voice_profile_combo = False
 
         layout = QVBoxLayout(self)
 
@@ -47,6 +50,13 @@ class DialoguePanel(QWidget):
         self.combo_model.addItems(["llama-8b-chat", "llama-70b-chat"])
         self.combo_model.currentTextChanged.connect(self._on_model_changed)
         model_row.addWidget(self.combo_model)
+        model_row.addSpacing(14)
+        model_row.addWidget(QLabel("Voice Profile"))
+        self.combo_voice_profile = QComboBox()
+        self.combo_voice_profile.setEditable(False)
+        self.combo_voice_profile.setEnabled(False)
+        self.combo_voice_profile.currentTextChanged.connect(self._on_voice_profile_changed)
+        model_row.addWidget(self.combo_voice_profile)
         layout.addLayout(model_row)
 
         prompt_row = QHBoxLayout()
@@ -104,6 +114,17 @@ class DialoguePanel(QWidget):
         self.spin_voice_max_words_manual.setValue(50)
         self.spin_voice_max_words_manual.valueChanged.connect(self._emit_word_limits_changed)
         word_limit_row.addWidget(self.spin_voice_max_words_manual)
+        word_limit_row.addSpacing(14)
+        word_limit_row.addWidget(QLabel("Audio Mode"))
+        self.btn_voice_audio_mode = QPushButton("Speaker Mode")
+        self.btn_voice_audio_mode.setCheckable(True)
+        self.btn_voice_audio_mode.setChecked(True)
+        self.btn_voice_audio_mode.setToolTip(
+            "Speaker Mode: safer clause-by-clause playback. "
+            "Headphone Mode: allows mid-speech interruption."
+        )
+        self.btn_voice_audio_mode.toggled.connect(self._on_voice_audio_mode_toggled)
+        word_limit_row.addWidget(self.btn_voice_audio_mode)
         word_limit_row.addStretch()
         layout.addLayout(word_limit_row)
 
@@ -140,8 +161,19 @@ class DialoguePanel(QWidget):
         if candidate:
             self.model_changed.emit(candidate)
 
+    def _on_voice_profile_changed(self, text: str):
+        if self._updating_voice_profile_combo:
+            return
+        candidate = (text or "").strip()
+        if candidate:
+            self.voice_profile_changed.emit(candidate)
+
     def _on_system_prompt_changed(self):
         self.system_prompt_changed.emit(self.get_system_prompt())
+
+    def _on_voice_audio_mode_toggled(self, speaker_mode: bool):
+        self.btn_voice_audio_mode.setText("Speaker Mode" if speaker_mode else "Headphone Mode")
+        self.voice_speaker_mode_changed.emit(bool(speaker_mode))
 
     def get_message_text(self) -> str:
         return self.input_message.toPlainText().strip()
@@ -149,17 +181,25 @@ class DialoguePanel(QWidget):
     def get_model(self) -> str:
         return self.combo_model.currentText().strip()
 
+    def get_selected_voice_profile(self) -> str:
+        return self.combo_voice_profile.currentText().strip()
+
     def get_system_prompt(self) -> str:
         return self.input_system_prompt.text().strip()
 
     def should_include_history(self) -> bool:
         return bool(self.chk_include_history.isChecked())
 
+    def is_speaker_mode(self) -> bool:
+        return bool(self.btn_voice_audio_mode.isChecked())
+
     def set_busy(self, busy: bool):
         ready = not bool(busy)
         self.btn_send.setEnabled(ready)
         self.btn_reset.setEnabled(ready)
         self.combo_model.setEnabled(ready)
+        self.combo_voice_profile.setEnabled(ready and self.combo_voice_profile.count() > 0)
+        self.btn_voice_audio_mode.setEnabled(ready)
         self.input_system_prompt.setEnabled(ready)
         self.chk_include_history.setEnabled(ready)
 
@@ -183,6 +223,37 @@ class DialoguePanel(QWidget):
         self.input_system_prompt.blockSignals(False)
         if emit:
             self.system_prompt_changed.emit(self.get_system_prompt())
+
+    def set_voice_profiles(self, profiles: list[dict], active_name: str, emit: bool = False):
+        names = [
+            str(p.get("name", "")).strip()
+            for p in profiles
+            if isinstance(p, dict) and str(p.get("name", "")).strip()
+        ]
+        self._updating_voice_profile_combo = True
+        self.combo_voice_profile.clear()
+        for name in names:
+            self.combo_voice_profile.addItem(name)
+        idx = self.combo_voice_profile.findText((active_name or "").strip())
+        self.combo_voice_profile.setCurrentIndex(idx if idx >= 0 else 0)
+        self.combo_voice_profile.setEnabled(bool(names) and self.btn_send.isEnabled())
+        self._updating_voice_profile_combo = False
+        if emit and names:
+            self.voice_profile_changed.emit(self.get_selected_voice_profile())
+
+    def set_active_voice_profile(self, profile_name: str, emit: bool = False):
+        name = (profile_name or "").strip()
+        if not name:
+            return
+        idx = self.combo_voice_profile.findText(name)
+        if idx < 0:
+            return
+        self._updating_voice_profile_combo = True
+        self.combo_voice_profile.setCurrentIndex(idx)
+        self.combo_voice_profile.setEnabled(self.btn_send.isEnabled())
+        self._updating_voice_profile_combo = False
+        if emit:
+            self.voice_profile_changed.emit(name)
 
     def set_include_history(self, enabled: bool, emit: bool = False):
         self.chk_include_history.blockSignals(True)
@@ -224,6 +295,8 @@ class DialoguePanel(QWidget):
         # Disable text input while voice is active
         self.input_message.setEnabled(not active)
         self.btn_send.setEnabled(not active)
+        self.combo_voice_profile.setEnabled((not active) and self.combo_voice_profile.count() > 0)
+        self.btn_voice_audio_mode.setEnabled(not active)
 
     def set_voice_auto_listen(self, enabled: bool):
         self.chk_auto_listen.blockSignals(True)
@@ -241,6 +314,15 @@ class DialoguePanel(QWidget):
         self.spin_voice_max_words_manual.blockSignals(False)
         if emit:
             self.voice_word_limits_changed.emit(auto_val, manual_val)
+
+    def set_speaker_mode(self, enabled: bool, emit: bool = False):
+        speaker_mode = bool(enabled)
+        self.btn_voice_audio_mode.blockSignals(True)
+        self.btn_voice_audio_mode.setChecked(speaker_mode)
+        self.btn_voice_audio_mode.setText("Speaker Mode" if speaker_mode else "Headphone Mode")
+        self.btn_voice_audio_mode.blockSignals(False)
+        if emit:
+            self.voice_speaker_mode_changed.emit(speaker_mode)
 
     def _emit_word_limits_changed(self, _value: int):
         self.voice_word_limits_changed.emit(

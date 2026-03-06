@@ -61,3 +61,47 @@ def test_is_speech_frame_accepts_high_energy_when_vad_true():
 def test_frame_rms_for_silence_is_zero():
     silent = np.zeros((480, 1), dtype=np.int16)
     assert VADListener._frame_rms(silent) == 0.0
+
+
+def test_speech_start_requires_stronger_gate():
+    listener = VADListener(
+        on_speech_chunk=lambda _wav: None,
+        on_speech_start=lambda: None,
+        vad_aggressiveness=3,
+        speech_start_min_frames=8,
+        speech_start_rms_multiplier=2.0,
+    )
+
+    should_emit = listener._should_emit_speech_start(
+        speech_frame_count=8,
+        frame_rms=480.0,
+        noise_rms=25.0,
+    )
+
+    assert should_emit is False
+
+
+def test_speech_start_emits_when_frames_and_rms_are_high_enough():
+    listener = VADListener(
+        on_speech_chunk=lambda _wav: None,
+        on_speech_start=lambda: None,
+        vad_aggressiveness=3,
+        speech_start_min_frames=8,
+        speech_start_rms_multiplier=2.0,
+    )
+
+    should_emit = listener._should_emit_speech_start(
+        speech_frame_count=8,
+        frame_rms=700.0,
+        noise_rms=25.0,
+    )
+
+    assert should_emit is True
+
+
+def test_speech_detection_holdoff_can_be_armed():
+    listener = VADListener(on_speech_chunk=lambda _wav: None)
+
+    listener.set_speech_detection_holdoff(0.5)
+
+    assert listener._in_speech_detection_holdoff() is True

@@ -23,12 +23,18 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# Regex for detecting sentence boundaries (period, question, exclamation, etc.)
+# Regex for detecting sentence boundaries and shorter speaker-mode chunks.
 _SENTENCE_END = re.compile(r'[.!?;]\s')
+_SPEECH_BREAK = re.compile(r'[.!?;:,]\s')
+_WORD_RE = re.compile(r"\S+")
 _MAX_WORDS_AUTO_LISTEN = 100
 _MAX_WORDS_MANUAL = 50
 _MIN_WORD_LIMIT = 10
 _MAX_WORD_LIMIT = 500
+_BARGE_IN_PLAYBACK_HOLDOFF_SECONDS = 0.30
+_BARGE_IN_SPEECH_START_FRAMES = 5
+_BARGE_IN_SPEECH_START_RMS_MULTIPLIER = 1.25
+_SPEECH_MAX_WORDS_PER_CHUNK = 12
 
 
 class VoiceDialogueState(Enum):
@@ -66,12 +72,14 @@ class VoiceDialogueOrchestrator:
         self._state = VoiceDialogueState.IDLE
         self._cancel = threading.Event()
         self._auto_listen = True
+        self._speaker_mode = True
         self._vad: Optional[VADListener] = None
         self._max_words_auto_listen = self._clamp_word_limit(_MAX_WORDS_AUTO_LISTEN, _MAX_WORDS_AUTO_LISTEN)
         self._max_words_manual = self._clamp_word_limit(_MAX_WORDS_MANUAL, _MAX_WORDS_MANUAL)
         self._turn_lock = threading.Lock()
         self._active_turn_id = 0
         self._active_turn_cancel: Optional[threading.Event] = None
+        self._barge_in_active = threading.Event()
 
         # Own STT/TTS clients to avoid conflicts with Capture tab
         self._stt_client = LemonFoxClient(config=config)
@@ -88,6 +96,14 @@ class VoiceDialogueOrchestrator:
     @auto_listen.setter
     def auto_listen(self, value: bool):
         self._auto_listen = bool(value)
+
+    @property
+    def speaker_mode(self) -> bool:
+        return self._speaker_mode
+
+    @speaker_mode.setter
+    def speaker_mode(self, value: bool):
+        self._speaker_mode = bool(value)
 
     @property
     def max_words_auto_listen(self) -> int:
@@ -121,6 +137,12 @@ class VoiceDialogueOrchestrator:
                 self._max_words_manual,
             )
 
+    def update_tts_settings(self, **kwargs):
+        """Update TTS settings for voice dialogue playback only."""
+        for key in ("model", "voice", "language", "response_format", "speed"):
+            if key in kwargs and kwargs[key] is not None:
+                setattr(self._tts_client, key, kwargs[key])
+
     def start(self):
         """Begin the voice dialogue loop (start listening)."""
         if self._state != VoiceDialogueState.IDLE:
@@ -131,6 +153,7 @@ class VoiceDialogueOrchestrator:
     def stop(self):
         """Stop the voice dialogue loop from any state."""
         self._cancel.set()
+        self._barge_in_active.clear()
         self._cancel_active_turn()
         self._stop_vad()
         stop_playback()
@@ -150,6 +173,9 @@ class VoiceDialogueOrchestrator:
             return
         self._vad = VADListener(
             on_speech_chunk=self._on_speech_chunk,
+            on_speech_start=self._on_speech_start,
+            speech_start_min_frames=_BARGE_IN_SPEECH_START_FRAMES,
+            speech_start_rms_multiplier=_BARGE_IN_SPEECH_START_RMS_MULTIPLIER,
             pause_threshold=self._config.vad_pause_threshold,
             vad_aggressiveness=self._config.vad_aggressiveness,
             min_speech_seconds=self._config.vad_min_speech_seconds,
@@ -173,6 +199,7 @@ class VoiceDialogueOrchestrator:
 
     def _start_turn(self) -> tuple[int, threading.Event]:
         with self._turn_lock:
+            self._barge_in_active.clear()
             if self._active_turn_cancel:
                 self._active_turn_cancel.set()
             self._active_turn_id += 1
@@ -198,27 +225,56 @@ class VoiceDialogueOrchestrator:
         return not self._is_turn_active(turn_id, turn_cancel)
 
     def _arm_interrupt_listener(self):
-        # Barge-in mode: while assistant is thinking/speaking, still listen so
-        # the user can interrupt with a new utterance.
+        # Speaker mode listens between short playback chunks. Headphone mode
+        # keeps the interrupt listener active even while audio is playing.
         if not self._auto_listen or self._cancel.is_set():
             return
         self._start_listening(set_state=False)
+
+    def _on_speech_start(self):
+        """Handle interrupt detection based on the current audio mode."""
+        if self._cancel.is_set() or not self._auto_listen:
+            return
+        if self._speaker_mode:
+            if self._state != VoiceDialogueState.THINKING:
+                return
+            logger.debug("Voice interruption detected while assistant is thinking; canceling current turn.")
+            self._cancel_active_turn()
+            self._set_state(VoiceDialogueState.LISTENING)
+            return
+
+        if self._barge_in_active.is_set():
+            return
+        if self._state not in (VoiceDialogueState.THINKING, VoiceDialogueState.SPEAKING):
+            return
+
+        logger.debug("Voice barge-in speech start detected; stopping assistant immediately.")
+        self._barge_in_active.set()
+        self._cancel_active_turn()
+        stop_playback()
+        self._set_state(VoiceDialogueState.LISTENING)
 
     def _on_speech_chunk(self, wav_bytes: bytes):
         """Called by VAD when a speech chunk is ready (background thread)."""
         if self._cancel.is_set():
             return
         current_state = self._state
-        allow_barge_in = self._auto_listen and current_state in (
-            VoiceDialogueState.TRANSCRIBING,
-            VoiceDialogueState.THINKING,
-            VoiceDialogueState.SPEAKING,
-        )
+        if self._speaker_mode:
+            allow_barge_in = self._auto_listen and current_state == VoiceDialogueState.THINKING
+        else:
+            allow_barge_in = self._auto_listen and (
+                self._barge_in_active.is_set()
+                or current_state in (
+                    VoiceDialogueState.TRANSCRIBING,
+                    VoiceDialogueState.THINKING,
+                    VoiceDialogueState.SPEAKING,
+                )
+            )
         if current_state != VoiceDialogueState.LISTENING and not allow_barge_in:
             return
 
         self._stop_vad()
-        if allow_barge_in:
+        if not self._speaker_mode and allow_barge_in and not self._barge_in_active.is_set():
             logger.debug("Voice barge-in detected; interrupting current turn.")
             self._cancel_active_turn()
             stop_playback()
@@ -262,19 +318,10 @@ class VoiceDialogueOrchestrator:
                     return
                 accumulated_text.append(delta)
                 sentence_buffer.append(delta)
-                buffer_str = "".join(sentence_buffer)
-
-                # Check for sentence boundary
-                match = _SENTENCE_END.search(buffer_str)
-                if match:
-                    end_pos = match.end()
-                    sentence = buffer_str[:end_pos].strip()
-                    remainder = buffer_str[end_pos:]
-                    sentence_buffer.clear()
-                    if remainder:
-                        sentence_buffer.append(remainder)
-                    if sentence:
-                        self._speak_sentence(sentence, turn_id, turn_cancel)
+                if self._speaker_mode:
+                    self._flush_ready_speech_chunks(sentence_buffer, turn_id, turn_cancel)
+                else:
+                    self._flush_ready_sentence_chunks(sentence_buffer, turn_id, turn_cancel)
 
             self._dialogue_service.send_stream(
                 user_text,
@@ -301,6 +348,9 @@ class VoiceDialogueOrchestrator:
         finally:
             if not self._is_turn_active(turn_id, turn_cancel):
                 return
+            if not self._speaker_mode and turn_cancel.is_set() and self._barge_in_active.is_set():
+                self._clear_turn_if_active(turn_id, turn_cancel)
+                return
             self._clear_turn_if_active(turn_id, turn_cancel)
             self._stop_vad()
             if self._cancel.is_set():
@@ -312,21 +362,80 @@ class VoiceDialogueOrchestrator:
                 self._maybe_auto_listen()
 
     def _speak_sentence(self, sentence: str, turn_id: int, turn_cancel: threading.Event):
-        """Synthesize and play a single sentence."""
+        """Synthesize and play one assistant speech chunk."""
         if self._turn_should_stop(turn_id, turn_cancel):
             return
         try:
+            if self._speaker_mode:
+                self._stop_vad()
             self._set_state(VoiceDialogueState.SPEAKING)
             audio_bytes = self._tts_client.synthesize(sentence, response_format="wav")
             if self._turn_should_stop(turn_id, turn_cancel):
                 return
             if self._on_assistant_audio:
                 self._on_assistant_audio(audio_bytes)
+            if not self._speaker_mode and self._vad:
+                self._vad.set_speech_detection_holdoff(_BARGE_IN_PLAYBACK_HOLDOFF_SECONDS)
             play_wav_bytes(audio_bytes)
             # Wait for playback to finish
             self._wait_for_playback(turn_id, turn_cancel)
+            if not self._turn_should_stop(turn_id, turn_cancel):
+                self._set_state(VoiceDialogueState.THINKING)
+                if self._speaker_mode:
+                    self._arm_interrupt_listener()
         except Exception as e:
             logger.error("TTS/playback failed for sentence: %s", e)
+
+    def _flush_ready_sentence_chunks(self, sentence_buffer: list[str], turn_id: int, turn_cancel: threading.Event):
+        while not self._turn_should_stop(turn_id, turn_cancel):
+            chunk, remainder = self._extract_sentence_chunk("".join(sentence_buffer))
+            if not chunk:
+                return
+            sentence_buffer.clear()
+            if remainder:
+                sentence_buffer.append(remainder)
+            self._speak_sentence(chunk, turn_id, turn_cancel)
+
+    def _flush_ready_speech_chunks(self, sentence_buffer: list[str], turn_id: int, turn_cancel: threading.Event):
+        while not self._turn_should_stop(turn_id, turn_cancel):
+            chunk, remainder = self._extract_speech_chunk("".join(sentence_buffer))
+            if not chunk:
+                return
+            sentence_buffer.clear()
+            if remainder:
+                sentence_buffer.append(remainder)
+            self._speak_sentence(chunk, turn_id, turn_cancel)
+
+    @staticmethod
+    def _extract_sentence_chunk(buffer: str) -> tuple[str, str]:
+        text = str(buffer or "")
+        if not text.strip():
+            return "", ""
+
+        match = _SENTENCE_END.search(text)
+        if not match:
+            return "", text
+
+        split_at = match.end()
+        return text[:split_at].strip(), text[split_at:]
+
+    @staticmethod
+    def _extract_speech_chunk(buffer: str) -> tuple[str, str]:
+        text = str(buffer or "")
+        if not text.strip():
+            return "", ""
+
+        match = _SPEECH_BREAK.search(text)
+        if match:
+            split_at = match.end()
+            return text[:split_at].strip(), text[split_at:]
+
+        word_matches = list(_WORD_RE.finditer(text))
+        if len(word_matches) >= _SPEECH_MAX_WORDS_PER_CHUNK:
+            split_at = word_matches[_SPEECH_MAX_WORDS_PER_CHUNK - 1].end()
+            return text[:split_at].strip(), text[split_at:]
+
+        return "", text
 
     def _wait_for_playback(self, turn_id: int, turn_cancel: threading.Event):
         """Wait for current audio playback to finish, checking cancel."""

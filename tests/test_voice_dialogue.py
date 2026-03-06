@@ -43,6 +43,12 @@ class TestVoiceDialogueState:
         orch = VoiceDialogueOrchestrator(config=config, dialogue_service=service)
         assert orch.auto_listen is True
 
+    def test_speaker_mode_default_true(self):
+        config = _make_config()
+        service = _make_service(config)
+        orch = VoiceDialogueOrchestrator(config=config, dialogue_service=service)
+        assert orch.speaker_mode is True
+
     def test_auto_listen_toggle(self):
         config = _make_config()
         service = _make_service(config)
@@ -51,6 +57,15 @@ class TestVoiceDialogueState:
         assert orch.auto_listen is False
         orch.auto_listen = True
         assert orch.auto_listen is True
+
+    def test_speaker_mode_toggle(self):
+        config = _make_config()
+        service = _make_service(config)
+        orch = VoiceDialogueOrchestrator(config=config, dialogue_service=service)
+        orch.speaker_mode = False
+        assert orch.speaker_mode is False
+        orch.speaker_mode = True
+        assert orch.speaker_mode is True
 
     def test_response_word_limits_are_configurable(self):
         config = _make_config()
@@ -61,6 +76,47 @@ class TestVoiceDialogueState:
 
         assert orch.max_words_auto_listen == 120
         assert orch.max_words_manual == 60
+
+    def test_dialogue_tts_settings_are_configurable(self):
+        config = _make_config()
+        service = _make_service(config)
+        orch = VoiceDialogueOrchestrator(config=config, dialogue_service=service)
+
+        orch.update_tts_settings(
+            model="tts-1-hd",
+            voice="narrator",
+            language="en",
+            speed=1.25,
+        )
+
+        assert orch._tts_client.model == "tts-1-hd"
+        assert orch._tts_client.voice == "narrator"
+        assert orch._tts_client.language == "en"
+        assert orch._tts_client.speed == 1.25
+
+    def test_extract_speech_chunk_prefers_punctuation_breaks(self):
+        chunk, remainder = VoiceDialogueOrchestrator._extract_speech_chunk(
+            "First clause, second clause continues"
+        )
+
+        assert chunk == "First clause,"
+        assert remainder == "second clause continues"
+
+    def test_extract_speech_chunk_falls_back_to_word_limit(self):
+        chunk, remainder = VoiceDialogueOrchestrator._extract_speech_chunk(
+            "one two three four five six seven eight nine ten eleven twelve thirteen"
+        )
+
+        assert chunk == "one two three four five six seven eight nine ten eleven twelve"
+        assert remainder == " thirteen"
+
+    def test_extract_sentence_chunk_waits_for_sentence_end(self):
+        chunk, remainder = VoiceDialogueOrchestrator._extract_sentence_chunk(
+            "First sentence. Second sentence"
+        )
+
+        assert chunk == "First sentence."
+        assert remainder == "Second sentence"
 
 
 class TestStartStop:
@@ -316,9 +372,43 @@ class TestAutoListen:
 
 
 class TestBargeIn:
-    @patch("core.voice_dialogue.stop_playback")
+    def test_speaker_mode_interrupts_while_thinking(self):
+        config = _make_config()
+        service = _make_service(config)
+        states = []
+        orch = VoiceDialogueOrchestrator(
+            config=config,
+            dialogue_service=service,
+            on_state_changed=lambda s: states.append(s),
+        )
+
+        previous_turn_cancel = threading.Event()
+        orch._active_turn_cancel = previous_turn_cancel
+        orch._auto_listen = True
+        orch._state = VoiceDialogueState.THINKING
+
+        orch._on_speech_start()
+
+        assert previous_turn_cancel.is_set()
+        assert orch.state == VoiceDialogueState.LISTENING
+        assert states[-1] == "LISTENING"
+
     @patch("core.voice_dialogue.threading.Thread")
-    def test_auto_listen_allows_barge_in_while_speaking(self, MockThread, mock_stop_playback):
+    def test_speaker_mode_ignores_speaking_chunk_during_playback(self, MockThread):
+        config = _make_config()
+        service = _make_service(config)
+        orch = VoiceDialogueOrchestrator(config=config, dialogue_service=service)
+
+        orch._auto_listen = True
+        orch._state = VoiceDialogueState.SPEAKING
+        orch._vad = MagicMock()
+
+        orch._on_speech_chunk(b"ignored")
+
+        MockThread.return_value.start.assert_not_called()
+
+    @patch("core.voice_dialogue.threading.Thread")
+    def test_speaker_mode_allows_barge_in_while_thinking(self, MockThread):
         config = _make_config()
         service = _make_service(config)
         orch = VoiceDialogueOrchestrator(config=config, dialogue_service=service)
@@ -326,13 +416,59 @@ class TestBargeIn:
         previous_turn_cancel = threading.Event()
         orch._active_turn_cancel = previous_turn_cancel
         orch._auto_listen = True
-        orch._state = VoiceDialogueState.SPEAKING
+        orch._state = VoiceDialogueState.THINKING
         orch._vad = MagicMock()
 
         orch._on_speech_chunk(b"interrupt-wav")
 
         assert previous_turn_cancel.is_set()
+        assert orch._state == VoiceDialogueState.TRANSCRIBING
+        assert orch._active_turn_cancel is not previous_turn_cancel
+        MockThread.return_value.start.assert_called_once()
+
+    @patch("core.voice_dialogue.stop_playback")
+    def test_headphone_mode_interrupts_while_speaking(self, mock_stop_playback):
+        config = _make_config()
+        service = _make_service(config)
+        states = []
+        orch = VoiceDialogueOrchestrator(
+            config=config,
+            dialogue_service=service,
+            on_state_changed=lambda s: states.append(s),
+        )
+
+        previous_turn_cancel = threading.Event()
+        orch._active_turn_cancel = previous_turn_cancel
+        orch._auto_listen = True
+        orch.speaker_mode = False
+        orch._state = VoiceDialogueState.SPEAKING
+
+        orch._on_speech_start()
+
+        assert previous_turn_cancel.is_set()
         mock_stop_playback.assert_called_once()
+        assert orch.state == VoiceDialogueState.LISTENING
+        assert states[-1] == "LISTENING"
+
+    @patch("core.voice_dialogue.stop_playback")
+    @patch("core.voice_dialogue.threading.Thread")
+    def test_headphone_mode_allows_barge_in_while_speaking(self, MockThread, mock_stop_playback):
+        config = _make_config()
+        service = _make_service(config)
+        orch = VoiceDialogueOrchestrator(config=config, dialogue_service=service)
+
+        previous_turn_cancel = threading.Event()
+        orch._active_turn_cancel = previous_turn_cancel
+        orch._auto_listen = True
+        orch.speaker_mode = False
+        orch._state = VoiceDialogueState.SPEAKING
+        orch._barge_in_active.set()
+        orch._vad = MagicMock()
+
+        orch._on_speech_chunk(b"interrupt-wav")
+
+        assert previous_turn_cancel.is_set()
+        mock_stop_playback.assert_not_called()
         assert orch._state == VoiceDialogueState.TRANSCRIBING
         assert orch._active_turn_cancel is not previous_turn_cancel
         MockThread.return_value.start.assert_called_once()

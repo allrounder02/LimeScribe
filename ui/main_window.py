@@ -115,6 +115,7 @@ class MainWindow(QMainWindow):
         self._profiles = []
         self._updating_listening_profiles = False
         self._tts_profiles = []
+        self._dialogue_voice_profile_name = ""
         self._output_history = []
         self._tts_last_audio_dir = ""
 
@@ -157,12 +158,14 @@ class MainWindow(QMainWindow):
         self.dialogue_panel.reset_requested.connect(self._on_dialogue_reset)
         self.dialogue_panel.use_output_requested.connect(self._load_dialogue_from_output)
         self.dialogue_panel.model_changed.connect(self._on_dialogue_model_changed)
+        self.dialogue_panel.voice_profile_changed.connect(self._on_dialogue_voice_profile_changed)
         self.dialogue_panel.system_prompt_changed.connect(self._on_dialogue_system_prompt_changed)
         self.dialogue_panel.history_mode_changed.connect(self._on_dialogue_history_mode_changed)
         self.dialogue_panel.voice_start_requested.connect(self._on_voice_start)
         self.dialogue_panel.voice_stop_requested.connect(self._on_voice_stop)
         self.dialogue_panel.auto_listen_changed.connect(self._on_voice_auto_listen_changed)
         self.dialogue_panel.voice_word_limits_changed.connect(self._on_voice_word_limits_changed)
+        self.dialogue_panel.voice_speaker_mode_changed.connect(self._on_voice_speaker_mode_changed)
         self.dialogue_panel.set_model(self.dialogue_service.client.model, emit=False)
         self.dialogue_panel.set_system_prompt(self.dialogue_service.system_prompt, emit=False)
         self.dialogue_panel.set_include_history(self.dialogue_service.include_history, emit=False)
@@ -171,6 +174,7 @@ class MainWindow(QMainWindow):
             self.voice_dialogue.max_words_manual,
             emit=False,
         )
+        self.dialogue_panel.set_speaker_mode(self.voice_dialogue.speaker_mode, emit=False)
         self.tabs.addTab(self.dialogue_panel, "Dialogue")
         self.tabs.setTabIcon(2, ui_icon(self, "tab_dialogue"))
 
@@ -304,12 +308,22 @@ class MainWindow(QMainWindow):
         model = str(settings.get("chat_model", self.dialogue_service.client.model)).strip()
         system_prompt = str(settings.get("chat_system_prompt", self.dialogue_service.system_prompt)).strip()
         include_history = bool(settings.get("chat_include_history", True))
+        self._dialogue_voice_profile_name = str(
+            settings.get("active_dialogue_tts_profile", settings.get("active_tts_profile", ""))
+        ).strip()
+        speaker_mode = bool(settings.get("voice_speaker_mode", True))
         auto_words = settings.get("voice_max_words_auto_listen", self.voice_dialogue.max_words_auto_listen)
         manual_words = settings.get("voice_max_words_manual", self.voice_dialogue.max_words_manual)
 
         self.dialogue_panel.set_model(model, emit=False)
         self.dialogue_panel.set_system_prompt(system_prompt, emit=False)
         self.dialogue_panel.set_include_history(include_history, emit=False)
+        self.voice_dialogue.speaker_mode = speaker_mode
+        self.dialogue_panel.set_speaker_mode(speaker_mode, emit=False)
+        self._refresh_dialogue_voice_profiles(
+            self._dialogue_voice_profile_name or str(settings.get("active_tts_profile", "")).strip(),
+            persist=False,
+        )
         self.voice_dialogue.set_response_word_limits(
             max_words_auto_listen=auto_words,
             max_words_manual=manual_words,
@@ -379,6 +393,7 @@ class MainWindow(QMainWindow):
         self.settings_panel.apply_tts_profiles(self._tts_profiles, active_name)
         self.tts_panel.set_tts_profiles(self._tts_profiles, active_name)
         self._apply_tts_profile_by_name(active_name, persist=False, sync_settings_panel=True, status_message=False)
+        self._refresh_dialogue_voice_profiles(self._dialogue_voice_profile_name or active_name, persist=False)
 
     def attach_ui_settings(self, settings: dict, on_ui_settings_changed=None):
         self._on_ui_settings_changed = on_ui_settings_changed
@@ -764,6 +779,11 @@ class MainWindow(QMainWindow):
         active_name = str(profile_data.get("active_tts_profile", "")).strip() or self._tts_profiles[0]["name"]
         self.tts_panel.set_tts_profiles(self._tts_profiles, active_name)
         self._apply_tts_profile_by_name(active_name, persist=False, sync_settings_panel=True, status_message=False)
+        should_persist_dialogue_profile = not self._find_tts_profile_by_name(self._dialogue_voice_profile_name)
+        self._refresh_dialogue_voice_profiles(
+            self._dialogue_voice_profile_name or active_name,
+            persist=should_persist_dialogue_profile,
+        )
         if self._on_tts_profiles_changed:
             self._on_tts_profiles_changed(
                 {
@@ -778,6 +798,53 @@ class MainWindow(QMainWindow):
             if str(profile.get("name", "")).strip() == name:
                 return profile
         return None
+
+    def _apply_dialogue_voice_profile_by_name(self, profile_name: str, persist: bool, status_message: bool) -> bool:
+        name = (profile_name or "").strip()
+        if not name:
+            return False
+        profile = self._find_tts_profile_by_name(name)
+        if not profile:
+            return False
+        speed = self._coerce_tts_speed_value(profile.get("tts_speed", self.tts_service.client.speed))
+        self.voice_dialogue.update_tts_settings(
+            model=profile.get("tts_model"),
+            voice=profile.get("tts_voice"),
+            language=profile.get("tts_language"),
+            response_format=profile.get("tts_response_format"),
+            speed=speed,
+        )
+        self._dialogue_voice_profile_name = name
+        self.dialogue_panel.set_active_voice_profile(name, emit=False)
+        if persist:
+            self._persist_dialogue_settings({"active_dialogue_tts_profile": name})
+        if status_message:
+            self.statusBar().showMessage(f"Dialogue voice profile applied: {name}")
+        return True
+
+    def _refresh_dialogue_voice_profiles(self, preferred_name: str, persist: bool) -> str:
+        if not self._tts_profiles:
+            self.dialogue_panel.set_voice_profiles([], "", emit=False)
+            fallback_name = (preferred_name or self._dialogue_voice_profile_name or "").strip()
+            if fallback_name:
+                self._dialogue_voice_profile_name = fallback_name
+            return self._dialogue_voice_profile_name
+
+        preferred = (preferred_name or "").strip()
+        if not self._find_tts_profile_by_name(preferred):
+            preferred = (self._dialogue_voice_profile_name or "").strip()
+        if not self._find_tts_profile_by_name(preferred):
+            preferred = self.tts_panel.combo_tts_profiles.currentText().strip()
+        if not self._find_tts_profile_by_name(preferred):
+            preferred = self._tts_profiles[0]["name"]
+
+        self.dialogue_panel.set_voice_profiles(self._tts_profiles, preferred, emit=False)
+        self._apply_dialogue_voice_profile_by_name(
+            preferred,
+            persist=persist,
+            status_message=False,
+        )
+        return preferred
 
     def _apply_tts_profile_by_name(
         self,
@@ -1151,6 +1218,13 @@ class MainWindow(QMainWindow):
         self.dialogue_service.update_settings(model=model)
         self._persist_dialogue_settings({"chat_model": str(model or "").strip()})
 
+    def _on_dialogue_voice_profile_changed(self, profile_name: str):
+        self._apply_dialogue_voice_profile_by_name(
+            profile_name,
+            persist=True,
+            status_message=True,
+        )
+
     def _on_dialogue_system_prompt_changed(self, prompt: str):
         prompt_value = str(prompt or "").strip()
         self.dialogue_service.update_settings(system_prompt=prompt_value, reset_history=True)
@@ -1174,11 +1248,18 @@ class MainWindow(QMainWindow):
         model = self.dialogue_panel.get_model()
         system_prompt = self.dialogue_panel.get_system_prompt()
         include_history = self.dialogue_panel.should_include_history()
+        voice_profile = self.dialogue_panel.get_selected_voice_profile() or self._dialogue_voice_profile_name
         self.dialogue_service.update_settings(
             model=model,
             system_prompt=system_prompt,
             include_history=include_history,
         )
+        if voice_profile:
+            self._apply_dialogue_voice_profile_by_name(
+                voice_profile,
+                persist=False,
+                status_message=False,
+            )
         self.dialogue_panel.set_voice_active(True)
         self.voice_dialogue.start()
         self.statusBar().showMessage("Voice dialogue started")
@@ -1204,6 +1285,15 @@ class MainWindow(QMainWindow):
             }
         )
         self.statusBar().showMessage("Voice response length limits updated")
+
+    def _on_voice_speaker_mode_changed(self, enabled: bool):
+        speaker_mode = bool(enabled)
+        self.voice_dialogue.speaker_mode = speaker_mode
+        self._persist_dialogue_settings({"voice_speaker_mode": speaker_mode})
+        if speaker_mode:
+            self.statusBar().showMessage("Dialogue audio mode set to Speaker Mode")
+        else:
+            self.statusBar().showMessage("Dialogue audio mode set to Headphone Mode")
 
     _VOICE_STATE_LABELS = {
         "IDLE": "",

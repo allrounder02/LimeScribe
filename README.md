@@ -8,7 +8,7 @@ ZestVoice is a speech-to-text and text-to-speech application powered by the **Le
 - **Recording mode** -- manual start/pause/stop recording
 - **File mode** -- transcribe audio files from disk
 - **Text-to-Speech** -- synthesize speech from text via LemonFox-compatible TTS API
-- **Dialogue mode** -- OpenAI-compatible chat with LemonFox Llama models
+- **Dialogue mode** -- OpenAI-compatible chat with LemonFox Llama models, dialogue voice profiles, and switchable speaker/headphone interruption behavior
 - **Headless CLI** -- transcribe files and generate TTS without a GUI (`cli.py`)
 - **Docker support** -- containerized headless transcription and TTS
 
@@ -19,7 +19,7 @@ ZestVoice is a speech-to-text and text-to-speech application powered by the **Le
 - Global hotkeys: `Ctrl+Alt+L` (listen), `Ctrl+Alt+R` (record), configurable in Settings
 - Voice Activity Detection (`webrtcvad`) for pause-based chunking
 - Clipboard output and optional paste simulation
-- Profile system for saving/loading STT and TTS presets
+- Profile system for saving/loading STT and TTS presets (Dialogue voice output reuses TTS voice profiles)
 
 ### Headless / Docker
 
@@ -154,7 +154,13 @@ The app starts in the system tray and opens the main window.
 
 **Text to Speech tab** -- Enter text or click **Use Transcription Output**. Click **Generate & Play** to synthesize audio and play it in-app when the response format is WAV. Use **Save Last Audio** to export and **Open Saved Audio** to reopen previously saved files.
 
-**Dialogue tab** -- Chat with LemonFox OpenAI-compatible models. Pick `llama-8b-chat` or `llama-70b-chat`, optionally customize the system prompt, and choose whether to include prior conversation history in each request.
+**Dialogue tab** -- Chat with LemonFox OpenAI-compatible models. Pick `llama-8b-chat` or `llama-70b-chat`, choose a dialogue **Voice Profile** from your saved TTS profiles, optionally customize the system prompt, and choose whether to include prior conversation history in each request.
+
+Voice dialogue options:
+- **Auto-listen** keeps the conversation loop running after the assistant replies.
+- **Max words (Auto)** and **Max words (Manual)** limit reply length depending on whether auto-listen is enabled.
+- **Speaker Mode** in **Audio Mode** is safer for open speakers; the assistant speaks in shorter chunks and listens between them to reduce false self-interrupts.
+- **Headphone Mode** in **Audio Mode** keeps full mid-speech barge-in enabled, which works best when the microphone is isolated from playback.
 
 **Settings tab** -- Three sub-pages: General (hotkeys), Speech (STT options + profiles), Voice (TTS options + voice presets). Changes apply immediately without restarting.
 

@@ -23,6 +23,11 @@ class SettingsPersistenceTests(unittest.TestCase):
             self.assertTrue(loaded["chat_include_history"])
             self.assertEqual(loaded["voice_max_words_auto_listen"], config.VOICE_MAX_WORDS_AUTO_LISTEN)
             self.assertEqual(loaded["voice_max_words_manual"], config.VOICE_MAX_WORDS_MANUAL)
+            self.assertTrue(loaded["voice_speaker_mode"])
+            self.assertEqual(
+                loaded["active_dialogue_tts_profile"],
+                config.DEFAULT_SETTINGS["active_dialogue_tts_profile"],
+            )
             self.assertEqual(loaded["output_history"], [])
 
     def test_save_and_reload_tts_optimization_fields(self):
@@ -69,6 +74,21 @@ class SettingsPersistenceTests(unittest.TestCase):
                         "chat_include_history": False,
                         "voice_max_words_auto_listen": 120,
                         "voice_max_words_manual": 60,
+                        "voice_speaker_mode": False,
+                        "active_dialogue_tts_profile": "Narrator",
+                        "tts_profiles": [
+                            {
+                                "name": "Narrator",
+                                "voice_filter_language": "any",
+                                "voice_filter_gender": "any",
+                                "tts_model": "tts-1",
+                                "tts_voice": "heart",
+                                "tts_language": "en-us",
+                                "tts_response_format": "wav",
+                                "tts_speed": "1.0",
+                            }
+                        ],
+                        "active_tts_profile": "Narrator",
                     }
                 )
                 loaded = config.load_app_settings()
@@ -78,6 +98,37 @@ class SettingsPersistenceTests(unittest.TestCase):
             self.assertFalse(loaded["chat_include_history"])
             self.assertEqual(loaded["voice_max_words_auto_listen"], 120)
             self.assertEqual(loaded["voice_max_words_manual"], 60)
+            self.assertFalse(loaded["voice_speaker_mode"])
+            self.assertEqual(loaded["active_dialogue_tts_profile"], "Narrator")
+
+    def test_dialogue_voice_profile_falls_back_to_active_tts_profile_when_missing(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            settings_path = Path(tmp_dir) / "settings.json"
+            settings_path.write_text(
+                json.dumps(
+                    {
+                        "active_tts_profile": "Default Voice",
+                        "active_dialogue_tts_profile": "Missing Voice",
+                        "tts_profiles": [
+                            {
+                                "name": "Default Voice",
+                                "voice_filter_language": "any",
+                                "voice_filter_gender": "any",
+                                "tts_model": "tts-1",
+                                "tts_voice": "heart",
+                                "tts_language": "en-us",
+                                "tts_response_format": "wav",
+                                "tts_speed": "1.0",
+                            }
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            with patch.object(config, "_SETTINGS_PATH", settings_path):
+                loaded = config.load_app_settings()
+
+            self.assertEqual(loaded["active_dialogue_tts_profile"], "Default Voice")
 
     def test_output_history_roundtrip_is_sanitized_and_limited(self):
         with tempfile.TemporaryDirectory() as tmp_dir:

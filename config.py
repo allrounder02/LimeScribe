@@ -91,7 +91,9 @@ DEFAULT_SETTINGS = {
     "chat_include_history": True,
     "voice_max_words_auto_listen": VOICE_MAX_WORDS_AUTO_LISTEN,
     "voice_max_words_manual": VOICE_MAX_WORDS_MANUAL,
+    "voice_speaker_mode": True,
     "active_tts_profile": _DEFAULT_TTS_PROFILE_NAME,
+    "active_dialogue_tts_profile": _DEFAULT_TTS_PROFILE_NAME,
     "tts_profiles": [
         {
             "name": _DEFAULT_TTS_PROFILE_NAME,
@@ -254,6 +256,8 @@ def load_app_settings() -> dict:
         settings["active_profile"] = settings["profiles"][0]["name"]
     if settings["active_tts_profile"] not in [p["name"] for p in settings["tts_profiles"]]:
         settings["active_tts_profile"] = settings["tts_profiles"][0]["name"]
+    if settings["active_dialogue_tts_profile"] not in [p["name"] for p in settings["tts_profiles"]]:
+        settings["active_dialogue_tts_profile"] = settings["active_tts_profile"]
     return settings
 
 
