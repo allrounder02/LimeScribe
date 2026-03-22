@@ -1,6 +1,7 @@
 """Unit tests for LemonFoxTTSClient error extraction and payload handling."""
 
 import unittest
+from unittest.mock import MagicMock, patch
 
 import httpx
 
@@ -50,6 +51,34 @@ class LemonFoxTTSClientErrorTests(unittest.TestCase):
             content=b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR",
         )
         self.assertEqual(LemonFoxTTSClient._unexpected_non_audio_message(response), "")
+
+    def test_openai_payload_omits_language_and_includes_instructions(self):
+        client = LemonFoxTTSClient(
+            api_key="test-key",
+            tts_url="https://api.openai.com/v1/audio/speech",
+            model="gpt-4o-mini-tts",
+            voice="coral",
+            language="en-us",
+            response_format="wav",
+            instructions="Speak warmly.",
+        )
+        response = httpx.Response(
+            200,
+            headers={"content-type": "audio/wav"},
+            content=b"RIFF....WAVE",
+        )
+
+        with patch("core.lemonfox_tts_client.get_shared_client") as mock_get:
+            mock_http = MagicMock()
+            mock_http.post.return_value = response
+            mock_get.return_value = mock_http
+
+            audio = client.synthesize("Hello world")
+
+        self.assertEqual(audio, b"RIFF....WAVE")
+        kwargs = mock_http.post.call_args.kwargs
+        self.assertNotIn("language", kwargs["json"])
+        self.assertEqual(kwargs["json"]["instructions"], "Speak warmly.")
 
 
 if __name__ == "__main__":

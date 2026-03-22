@@ -5,52 +5,173 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
+
+def _getenv(*names: str, default: str = "") -> str:
+    for name in names:
+        if name in os.environ:
+            return os.environ[name]
+    return default
+
+
+def _getenv_int(*names: str, default: int) -> int:
+    raw = _getenv(*names, default=str(default))
+    try:
+        return int(raw)
+    except (TypeError, ValueError):
+        return int(default)
+
+
+def _getenv_float(*names: str, default: float) -> float:
+    raw = _getenv(*names, default=str(default))
+    try:
+        return float(raw)
+    except (TypeError, ValueError):
+        return float(default)
+
+
+def _openai_mode_enabled() -> bool:
+    return bool(str(os.environ.get("OPENAI_API_KEY", "")).strip())
+
+
+OPENAI_TTS_MODELS = ("gpt-4o-mini-tts", "tts-1", "tts-1-hd")
+OPENAI_TTS_VOICES = (
+    "alloy",
+    "ash",
+    "ballad",
+    "cedar",
+    "coral",
+    "echo",
+    "fable",
+    "marin",
+    "nova",
+    "onyx",
+    "sage",
+    "shimmer",
+    "verse",
+)
+OPENAI_TTS_RESPONSE_FORMATS = ("wav", "mp3", "opus", "aac", "flac", "pcm")
+OPENAI_STT_RESPONSE_FORMATS = ("json", "text", "srt", "vtt", "verbose_json")
+
+
+def _normalize_chat_model(value, default: str = "gpt-4o-mini") -> str:
+    candidate = str(value or "").strip()
+    if not candidate:
+        return default
+    if candidate.startswith("llama-"):
+        return default
+    return candidate
+
+
+def _normalize_tts_model(value, default: str = "gpt-4o-mini-tts") -> str:
+    candidate = str(value or "").strip()
+    return candidate or default
+
+
+def _normalize_tts_voice(value, default: str = "coral") -> str:
+    candidate = str(value or "").strip()
+    if not candidate:
+        return default
+    if candidate in OPENAI_TTS_VOICES or candidate.startswith("voice_"):
+        return candidate
+    legacy_map = {
+        "heart": "coral",
+        "bella": "shimmer",
+        "michael": "onyx",
+        "aoede": "ash",
+        "kore": "echo",
+        "jessica": "shimmer",
+        "nicole": "nova",
+        "river": "sage",
+        "sky": "alloy",
+        "fenrir": "echo",
+        "liam": "onyx",
+        "puck": "fable",
+        "adam": "alloy",
+        "santa": "verse",
+        "alice": "marin",
+        "emma": "marin",
+        "isabella": "cedar",
+        "lily": "shimmer",
+        "daniel": "onyx",
+        "george": "alloy",
+        "lewis": "echo",
+    }
+    return legacy_map.get(candidate.lower(), default)
+
 # Hotkey defaults defined here to avoid circular import with hotkeys.py
 DEFAULT_HOTKEY_LISTEN = "Ctrl+Alt+L"
 DEFAULT_HOTKEY_RECORD = "Ctrl+Alt+R"
 DEFAULT_HOTKEY_DIALOGUE = "Ctrl+Alt+D"
 
-LEMONFOX_API_KEY = os.getenv("LEMONFOX_API_KEY", "")
-LEMONFOX_LANGUAGE = os.getenv("LEMONFOX_LANGUAGE", "english")
-LEMONFOX_RESPONSE_FORMAT = os.getenv("LEMONFOX_RESPONSE_FORMAT", "json")
-VAD_PAUSE_THRESHOLD = float(os.getenv("VAD_PAUSE_THRESHOLD", "1.5"))
-VAD_AGGRESSIVENESS = int(os.getenv("VAD_AGGRESSIVENESS", "3"))
-VAD_MIN_SPEECH_SECONDS = float(os.getenv("VAD_MIN_SPEECH_SECONDS", "0.5"))
-LEMONFOX_API_URL = os.getenv(
-    "LEMONFOX_API_URL",
-    "https://api.lemonfox.ai/v1/audio/transcriptions",
-)
-LEMONFOX_API_FALLBACK_URL = os.getenv(
-    "LEMONFOX_API_FALLBACK_URL",
-    "https://transcribe.whisperapi.com",
-)
-LEMONFOX_TTS_URL = os.getenv(
-    "LEMONFOX_TTS_URL",
-    "https://api.lemonfox.ai/v1/audio/speech",
-)
-LEMONFOX_TTS_FALLBACK_URL = os.getenv(
-    "LEMONFOX_TTS_FALLBACK_URL",
-    "",
-)
-LEMONFOX_TTS_MODEL = os.getenv("LEMONFOX_TTS_MODEL", "tts-1")
-LEMONFOX_TTS_VOICE = os.getenv("LEMONFOX_TTS_VOICE", "heart")
-LEMONFOX_TTS_LANGUAGE = os.getenv("LEMONFOX_TTS_LANGUAGE", "en-us")
-LEMONFOX_TTS_RESPONSE_FORMAT = os.getenv("LEMONFOX_TTS_RESPONSE_FORMAT", "wav")
-LEMONFOX_TTS_SPEED = float(os.getenv("LEMONFOX_TTS_SPEED", "1.0"))
-LEMONFOX_CHAT_URL = os.getenv(
-    "LEMONFOX_CHAT_URL",
-    "https://api.lemonfox.ai/v1/chat/completions",
-)
-LEMONFOX_CHAT_FALLBACK_URL = os.getenv(
-    "LEMONFOX_CHAT_FALLBACK_URL",
-    "",
-)
-LEMONFOX_CHAT_MODEL = os.getenv("LEMONFOX_CHAT_MODEL", "llama-8b-chat")
-LEMONFOX_CHAT_SYSTEM_PROMPT = os.getenv("LEMONFOX_CHAT_SYSTEM_PROMPT", "You are a helpful assistant.")
-VOICE_MAX_WORDS_AUTO_LISTEN = int(os.getenv("VOICE_MAX_WORDS_AUTO_LISTEN", "100"))
-VOICE_MAX_WORDS_MANUAL = int(os.getenv("VOICE_MAX_WORDS_MANUAL", "50"))
-LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").upper()
-LOG_FILE = os.getenv("LOG_FILE", "").strip()
+OPENAI_API_KEY = _getenv("OPENAI_API_KEY", "LEMONFOX_API_KEY", default="")
+if _openai_mode_enabled():
+    OPENAI_STT_MODEL = _getenv("OPENAI_STT_MODEL", default="gpt-4o-mini-transcribe")
+    OPENAI_STT_LANGUAGE = _getenv("OPENAI_STT_LANGUAGE", default="english")
+    OPENAI_STT_RESPONSE_FORMAT = _getenv("OPENAI_STT_RESPONSE_FORMAT", default="json")
+    OPENAI_STT_URL = _getenv("OPENAI_STT_URL", default="https://api.openai.com/v1/audio/transcriptions")
+    OPENAI_STT_FALLBACK_URL = _getenv("OPENAI_STT_FALLBACK_URL", default="")
+    OPENAI_TTS_URL = _getenv("OPENAI_TTS_URL", default="https://api.openai.com/v1/audio/speech")
+    OPENAI_TTS_FALLBACK_URL = _getenv("OPENAI_TTS_FALLBACK_URL", default="")
+    OPENAI_TTS_MODEL = _normalize_tts_model(_getenv("OPENAI_TTS_MODEL", default="gpt-4o-mini-tts"))
+    OPENAI_TTS_VOICE = _normalize_tts_voice(_getenv("OPENAI_TTS_VOICE", default="coral"))
+    OPENAI_TTS_LANGUAGE = _getenv("OPENAI_TTS_LANGUAGE", default="en-us")
+    OPENAI_TTS_RESPONSE_FORMAT = _getenv("OPENAI_TTS_RESPONSE_FORMAT", default="wav")
+    OPENAI_TTS_SPEED = _getenv_float("OPENAI_TTS_SPEED", default=1.0)
+else:
+    OPENAI_STT_MODEL = _getenv("LEMONFOX_STT_MODEL", default="gpt-4o-mini-transcribe")
+    OPENAI_STT_LANGUAGE = _getenv("LEMONFOX_LANGUAGE", default="english")
+    OPENAI_STT_RESPONSE_FORMAT = _getenv("LEMONFOX_RESPONSE_FORMAT", default="json")
+    OPENAI_STT_URL = _getenv("LEMONFOX_API_URL", default="https://api.openai.com/v1/audio/transcriptions")
+    OPENAI_STT_FALLBACK_URL = _getenv("LEMONFOX_API_FALLBACK_URL", default="")
+    OPENAI_TTS_URL = _getenv("LEMONFOX_TTS_URL", default="https://api.openai.com/v1/audio/speech")
+    OPENAI_TTS_FALLBACK_URL = _getenv("LEMONFOX_TTS_FALLBACK_URL", default="")
+    OPENAI_TTS_MODEL = _normalize_tts_model(_getenv("LEMONFOX_TTS_MODEL", default="gpt-4o-mini-tts"))
+    OPENAI_TTS_VOICE = _normalize_tts_voice(_getenv("LEMONFOX_TTS_VOICE", default="coral"))
+    OPENAI_TTS_LANGUAGE = _getenv("LEMONFOX_TTS_LANGUAGE", default="en-us")
+    OPENAI_TTS_RESPONSE_FORMAT = _getenv("LEMONFOX_TTS_RESPONSE_FORMAT", default="wav")
+    OPENAI_TTS_SPEED = _getenv_float("LEMONFOX_TTS_SPEED", default=1.0)
+OPENAI_TTS_INSTRUCTIONS = _getenv("OPENAI_TTS_INSTRUCTIONS", default="")
+if _openai_mode_enabled():
+    OPENAI_CHAT_URL = _getenv("OPENAI_CHAT_URL", default="https://api.openai.com/v1/chat/completions")
+    OPENAI_CHAT_FALLBACK_URL = _getenv("OPENAI_CHAT_FALLBACK_URL", default="")
+    OPENAI_CHAT_MODEL = _normalize_chat_model(_getenv("OPENAI_CHAT_MODEL", default="gpt-4o-mini"))
+    OPENAI_CHAT_SYSTEM_PROMPT = _getenv(
+        "OPENAI_CHAT_SYSTEM_PROMPT",
+        default="You are a helpful assistant.",
+    )
+else:
+    OPENAI_CHAT_URL = _getenv("LEMONFOX_CHAT_URL", default="https://api.openai.com/v1/chat/completions")
+    OPENAI_CHAT_FALLBACK_URL = _getenv("LEMONFOX_CHAT_FALLBACK_URL", default="")
+    OPENAI_CHAT_MODEL = _normalize_chat_model(_getenv("LEMONFOX_CHAT_MODEL", default="gpt-4o-mini"))
+    OPENAI_CHAT_SYSTEM_PROMPT = _getenv(
+        "LEMONFOX_CHAT_SYSTEM_PROMPT",
+        default="You are a helpful assistant.",
+    )
+VAD_PAUSE_THRESHOLD = _getenv_float("VAD_PAUSE_THRESHOLD", default=1.5)
+VAD_AGGRESSIVENESS = _getenv_int("VAD_AGGRESSIVENESS", default=3)
+VAD_MIN_SPEECH_SECONDS = _getenv_float("VAD_MIN_SPEECH_SECONDS", default=0.5)
+VOICE_MAX_WORDS_AUTO_LISTEN = _getenv_int("VOICE_MAX_WORDS_AUTO_LISTEN", default=100)
+VOICE_MAX_WORDS_MANUAL = _getenv_int("VOICE_MAX_WORDS_MANUAL", default=50)
+LOG_LEVEL = _getenv("LOG_LEVEL", default="INFO").upper()
+LOG_FILE = _getenv("LOG_FILE", default="").strip()
+
+# Legacy aliases kept so the rest of the app can migrate incrementally.
+LEMONFOX_API_KEY = OPENAI_API_KEY
+LEMONFOX_LANGUAGE = OPENAI_STT_LANGUAGE
+LEMONFOX_RESPONSE_FORMAT = OPENAI_STT_RESPONSE_FORMAT
+LEMONFOX_API_URL = OPENAI_STT_URL
+LEMONFOX_API_FALLBACK_URL = OPENAI_STT_FALLBACK_URL
+LEMONFOX_TTS_URL = OPENAI_TTS_URL
+LEMONFOX_TTS_FALLBACK_URL = OPENAI_TTS_FALLBACK_URL
+LEMONFOX_TTS_MODEL = OPENAI_TTS_MODEL
+LEMONFOX_TTS_VOICE = OPENAI_TTS_VOICE
+LEMONFOX_TTS_LANGUAGE = OPENAI_TTS_LANGUAGE
+LEMONFOX_TTS_RESPONSE_FORMAT = OPENAI_TTS_RESPONSE_FORMAT
+LEMONFOX_TTS_SPEED = OPENAI_TTS_SPEED
+LEMONFOX_CHAT_URL = OPENAI_CHAT_URL
+LEMONFOX_CHAT_FALLBACK_URL = OPENAI_CHAT_FALLBACK_URL
+LEMONFOX_CHAT_MODEL = OPENAI_CHAT_MODEL
+LEMONFOX_CHAT_SYSTEM_PROMPT = OPENAI_CHAT_SYSTEM_PROMPT
 
 _SETTINGS_PATH = Path(__file__).with_name("settings.json")
 
@@ -70,8 +191,8 @@ DEFAULT_SETTINGS = {
     "hotkey_listen": DEFAULT_HOTKEY_LISTEN,
     "hotkey_record": DEFAULT_HOTKEY_RECORD,
     "hotkey_dialogue": DEFAULT_HOTKEY_DIALOGUE,
-    "stt_language": LEMONFOX_LANGUAGE,
-    "stt_response_format": LEMONFOX_RESPONSE_FORMAT,
+    "stt_language": OPENAI_STT_LANGUAGE,
+    "stt_response_format": OPENAI_STT_RESPONSE_FORMAT,
     "auto_copy_transcription": True,
     "clear_output_after_copy": False,
     "stop_listening_after_copy": False,
@@ -79,15 +200,15 @@ DEFAULT_SETTINGS = {
     "vad_noise_level": _DEFAULT_VAD_NOISE_LEVEL,
     "vad_aggressiveness": VAD_AGGRESSIVENESS,
     "vad_min_speech_seconds": VAD_MIN_SPEECH_SECONDS,
-    "tts_model": LEMONFOX_TTS_MODEL,
-    "tts_voice": LEMONFOX_TTS_VOICE,
-    "tts_language": LEMONFOX_TTS_LANGUAGE,
-    "tts_response_format": LEMONFOX_TTS_RESPONSE_FORMAT,
-    "tts_speed": str(LEMONFOX_TTS_SPEED),
+    "tts_model": OPENAI_TTS_MODEL,
+    "tts_voice": OPENAI_TTS_VOICE,
+    "tts_language": OPENAI_TTS_LANGUAGE,
+    "tts_response_format": OPENAI_TTS_RESPONSE_FORMAT,
+    "tts_speed": str(OPENAI_TTS_SPEED),
     "tts_optimize_long_text": True,
     "tts_optimize_threshold_chars": 240,
-    "chat_model": LEMONFOX_CHAT_MODEL,
-    "chat_system_prompt": LEMONFOX_CHAT_SYSTEM_PROMPT,
+    "chat_model": OPENAI_CHAT_MODEL,
+    "chat_system_prompt": OPENAI_CHAT_SYSTEM_PROMPT,
     "chat_include_history": True,
     "voice_max_words_auto_listen": VOICE_MAX_WORDS_AUTO_LISTEN,
     "voice_max_words_manual": VOICE_MAX_WORDS_MANUAL,
@@ -99,11 +220,11 @@ DEFAULT_SETTINGS = {
             "name": _DEFAULT_TTS_PROFILE_NAME,
             "voice_filter_language": "any",
             "voice_filter_gender": "any",
-            "tts_model": LEMONFOX_TTS_MODEL,
-            "tts_voice": LEMONFOX_TTS_VOICE,
-            "tts_language": LEMONFOX_TTS_LANGUAGE,
-            "tts_response_format": LEMONFOX_TTS_RESPONSE_FORMAT,
-            "tts_speed": str(LEMONFOX_TTS_SPEED),
+            "tts_model": OPENAI_TTS_MODEL,
+            "tts_voice": OPENAI_TTS_VOICE,
+            "tts_language": OPENAI_TTS_LANGUAGE,
+            "tts_response_format": OPENAI_TTS_RESPONSE_FORMAT,
+            "tts_speed": str(OPENAI_TTS_SPEED),
         }
     ],
     "output_history": [],
@@ -113,16 +234,16 @@ DEFAULT_SETTINGS = {
     "profiles": [
         {
             "name": "Default",
-            "stt_language": LEMONFOX_LANGUAGE,
-            "stt_response_format": LEMONFOX_RESPONSE_FORMAT,
+            "stt_language": OPENAI_STT_LANGUAGE,
+            "stt_response_format": OPENAI_STT_RESPONSE_FORMAT,
             "vad_noise_level": _DEFAULT_VAD_NOISE_LEVEL,
             "vad_aggressiveness": VAD_AGGRESSIVENESS,
             "vad_min_speech_seconds": VAD_MIN_SPEECH_SECONDS,
-            "tts_model": LEMONFOX_TTS_MODEL,
-            "tts_voice": LEMONFOX_TTS_VOICE,
-            "tts_language": LEMONFOX_TTS_LANGUAGE,
-            "tts_response_format": LEMONFOX_TTS_RESPONSE_FORMAT,
-            "tts_speed": str(LEMONFOX_TTS_SPEED),
+            "tts_model": OPENAI_TTS_MODEL,
+            "tts_voice": OPENAI_TTS_VOICE,
+            "tts_language": OPENAI_TTS_LANGUAGE,
+            "tts_response_format": OPENAI_TTS_RESPONSE_FORMAT,
+            "tts_speed": str(OPENAI_TTS_SPEED),
         }
     ],
 }
@@ -206,8 +327,14 @@ def load_app_settings() -> dict:
                                         item.get("vad_min_speech_seconds", settings["vad_min_speech_seconds"]),
                                         settings["vad_min_speech_seconds"],
                                     ),
-                                    "tts_model": str(item.get("tts_model", settings["tts_model"])).strip(),
-                                    "tts_voice": str(item.get("tts_voice", settings["tts_voice"])).strip(),
+                                    "tts_model": _normalize_tts_model(
+                                        item.get("tts_model", settings["tts_model"]),
+                                        default=settings["tts_model"],
+                                    ),
+                                    "tts_voice": _normalize_tts_voice(
+                                        item.get("tts_voice", settings["tts_voice"]),
+                                        default=settings["tts_voice"],
+                                    ),
                                     "tts_language": str(item.get("tts_language", settings["tts_language"])).strip(),
                                     "tts_response_format": str(
                                         item.get("tts_response_format", settings["tts_response_format"])
@@ -229,8 +356,14 @@ def load_app_settings() -> dict:
                                     ).strip().lower() or "any",
                                     "voice_filter_gender": str(item.get("voice_filter_gender", "any")).strip().lower()
                                     or "any",
-                                    "tts_model": str(item.get("tts_model", settings["tts_model"])).strip(),
-                                    "tts_voice": str(item.get("tts_voice", settings["tts_voice"])).strip(),
+                                    "tts_model": _normalize_tts_model(
+                                        item.get("tts_model", settings["tts_model"]),
+                                        default=settings["tts_model"],
+                                    ),
+                                    "tts_voice": _normalize_tts_voice(
+                                        item.get("tts_voice", settings["tts_voice"]),
+                                        default=settings["tts_voice"],
+                                    ),
                                     "tts_language": str(item.get("tts_language", settings["tts_language"])).strip(),
                                     "tts_response_format": str(
                                         item.get("tts_response_format", settings["tts_response_format"])
@@ -249,9 +382,20 @@ def load_app_settings() -> dict:
                 elif isinstance(DEFAULT_SETTINGS.get(key), float):
                     settings[key] = _coerce_float(value, DEFAULT_SETTINGS[key])
                 elif isinstance(value, str) and value.strip():
-                    settings[key] = value.strip()
+                    cleaned = value.strip()
+                    if key == "chat_model":
+                        settings[key] = _normalize_chat_model(cleaned, default=DEFAULT_SETTINGS[key])
+                    elif key == "tts_model":
+                        settings[key] = _normalize_tts_model(cleaned, default=DEFAULT_SETTINGS[key])
+                    elif key == "tts_voice":
+                        settings[key] = _normalize_tts_voice(cleaned, default=DEFAULT_SETTINGS[key])
+                    else:
+                        settings[key] = cleaned
     except (json.JSONDecodeError, OSError):
         pass
+    settings["chat_model"] = _normalize_chat_model(settings.get("chat_model"), default=DEFAULT_SETTINGS["chat_model"])
+    settings["tts_model"] = _normalize_tts_model(settings.get("tts_model"), default=DEFAULT_SETTINGS["tts_model"])
+    settings["tts_voice"] = _normalize_tts_voice(settings.get("tts_voice"), default=DEFAULT_SETTINGS["tts_voice"])
     if settings["active_profile"] not in [p["name"] for p in settings["profiles"]]:
         settings["active_profile"] = settings["profiles"][0]["name"]
     if settings["active_tts_profile"] not in [p["name"] for p in settings["tts_profiles"]]:
@@ -276,5 +420,13 @@ def save_app_settings(settings: dict):
         elif isinstance(DEFAULT_SETTINGS.get(key), float):
             payload[key] = _coerce_float(value, payload.get(key, DEFAULT_SETTINGS[key]))
         elif isinstance(value, str) and value.strip():
-            payload[key] = value.strip()
+            cleaned = value.strip()
+            if key == "chat_model":
+                payload[key] = _normalize_chat_model(cleaned, default=DEFAULT_SETTINGS[key])
+            elif key == "tts_model":
+                payload[key] = _normalize_tts_model(cleaned, default=DEFAULT_SETTINGS[key])
+            elif key == "tts_voice":
+                payload[key] = _normalize_tts_voice(cleaned, default=DEFAULT_SETTINGS[key])
+            else:
+                payload[key] = cleaned
     _SETTINGS_PATH.write_text(json.dumps(payload, indent=2), encoding="utf-8")

@@ -48,7 +48,7 @@ class MainWindow(QMainWindow):
 
     def __init__(self, config: Optional[AppConfig] = None):
         super().__init__()
-        self.setWindowTitle("LemonFox Transcriber")
+        self.setWindowTitle("ZestVoice")
         self.setMinimumHeight(480)
         self.resize(980, 680)
 

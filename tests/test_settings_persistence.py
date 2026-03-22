@@ -93,13 +93,45 @@ class SettingsPersistenceTests(unittest.TestCase):
                 )
                 loaded = config.load_app_settings()
 
-            self.assertEqual(loaded["chat_model"], "llama-70b-chat")
+            self.assertEqual(loaded["chat_model"], config.OPENAI_CHAT_MODEL)
             self.assertEqual(loaded["chat_system_prompt"], "You are concise.")
             self.assertFalse(loaded["chat_include_history"])
             self.assertEqual(loaded["voice_max_words_auto_listen"], 120)
             self.assertEqual(loaded["voice_max_words_manual"], 60)
             self.assertFalse(loaded["voice_speaker_mode"])
             self.assertEqual(loaded["active_dialogue_tts_profile"], "Narrator")
+            self.assertEqual(loaded["tts_profiles"][0]["tts_voice"], config.OPENAI_TTS_VOICE)
+
+    def test_legacy_provider_values_are_normalized_to_openai_defaults(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            settings_path = Path(tmp_dir) / "settings.json"
+            settings_path.write_text(
+                json.dumps(
+                    {
+                        "chat_model": "llama-8b-chat",
+                        "tts_voice": "heart",
+                        "tts_profiles": [
+                            {
+                                "name": "Legacy Voice",
+                                "voice_filter_language": "any",
+                                "voice_filter_gender": "any",
+                                "tts_model": "tts-1",
+                                "tts_voice": "heart",
+                                "tts_language": "en-us",
+                                "tts_response_format": "wav",
+                                "tts_speed": "1.0",
+                            }
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            with patch.object(config, "_SETTINGS_PATH", settings_path):
+                loaded = config.load_app_settings()
+
+            self.assertEqual(loaded["chat_model"], config.OPENAI_CHAT_MODEL)
+            self.assertEqual(loaded["tts_voice"], config.OPENAI_TTS_VOICE)
+            self.assertEqual(loaded["tts_profiles"][0]["tts_voice"], config.OPENAI_TTS_VOICE)
 
     def test_dialogue_voice_profile_falls_back_to_active_tts_profile_when_missing(self):
         with tempfile.TemporaryDirectory() as tmp_dir:

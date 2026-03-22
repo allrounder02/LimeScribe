@@ -14,7 +14,7 @@ logger = logging.getLogger(__name__)
 
 
 class LemonFoxTTSClient:
-    """Wrapper for LemonFox/OpenAI-compatible text-to-speech APIs."""
+    """Wrapper for OpenAI-compatible text-to-speech APIs."""
 
     def __init__(
         self,
@@ -27,6 +27,7 @@ class LemonFoxTTSClient:
         language=None,
         response_format=None,
         speed=None,
+        instructions=None,
     ):
         if config:
             self.api_key = api_key or config.api_key
@@ -37,20 +38,28 @@ class LemonFoxTTSClient:
             self.language = language or config.tts_language
             self.response_format = response_format or config.tts_response_format
             self.speed = config.tts_speed if speed is None else speed
+            self.instructions = instructions if instructions is not None else config.tts_instructions
         else:
             from config import (
-                LEMONFOX_API_KEY, LEMONFOX_TTS_URL, LEMONFOX_TTS_FALLBACK_URL,
-                LEMONFOX_TTS_MODEL, LEMONFOX_TTS_VOICE, LEMONFOX_TTS_LANGUAGE,
-                LEMONFOX_TTS_RESPONSE_FORMAT, LEMONFOX_TTS_SPEED,
+                OPENAI_API_KEY,
+                OPENAI_TTS_FALLBACK_URL,
+                OPENAI_TTS_INSTRUCTIONS,
+                OPENAI_TTS_LANGUAGE,
+                OPENAI_TTS_MODEL,
+                OPENAI_TTS_RESPONSE_FORMAT,
+                OPENAI_TTS_SPEED,
+                OPENAI_TTS_URL,
+                OPENAI_TTS_VOICE,
             )
-            self.api_key = api_key or LEMONFOX_API_KEY
-            self.tts_url = tts_url or LEMONFOX_TTS_URL
-            self.fallback_url = fallback_url if fallback_url is not None else LEMONFOX_TTS_FALLBACK_URL
-            self.model = model or LEMONFOX_TTS_MODEL
-            self.voice = voice or LEMONFOX_TTS_VOICE
-            self.language = language or LEMONFOX_TTS_LANGUAGE
-            self.response_format = response_format or LEMONFOX_TTS_RESPONSE_FORMAT
-            self.speed = LEMONFOX_TTS_SPEED if speed is None else speed
+            self.api_key = api_key or OPENAI_API_KEY
+            self.tts_url = tts_url or OPENAI_TTS_URL
+            self.fallback_url = fallback_url if fallback_url is not None else OPENAI_TTS_FALLBACK_URL
+            self.model = model or OPENAI_TTS_MODEL
+            self.voice = voice or OPENAI_TTS_VOICE
+            self.language = language or OPENAI_TTS_LANGUAGE
+            self.response_format = response_format or OPENAI_TTS_RESPONSE_FORMAT
+            self.speed = OPENAI_TTS_SPEED if speed is None else speed
+            self.instructions = instructions if instructions is not None else OPENAI_TTS_INSTRUCTIONS
 
     def _headers(self):
         return {"Authorization": f"Bearer {self.api_key}"}
@@ -128,7 +137,20 @@ class LemonFoxTTSClient:
         content_type = str(resp.headers.get("content-type", "")).strip() or "unknown content-type"
         return f"TTS API returned {content_type} instead of audio: {detail}"
 
-    def synthesize(self, text: str, model=None, voice=None, language=None, response_format=None, speed=None) -> bytes:
+    @staticmethod
+    def _supports_openai_native_payload(endpoint: str) -> bool:
+        return "api.openai.com" in str(endpoint or "")
+
+    def synthesize(
+        self,
+        text: str,
+        model=None,
+        voice=None,
+        language=None,
+        response_format=None,
+        speed=None,
+        instructions=None,
+    ) -> bytes:
         if not text or not text.strip():
             raise ValueError("Text-to-speech input cannot be empty.")
 
@@ -136,10 +158,12 @@ class LemonFoxTTSClient:
             "model": model or self.model,
             "voice": voice or self.voice,
             "input": text,
-            "language": language or self.language,
             "response_format": response_format or self.response_format,
             "speed": self.speed if speed is None else speed,
         }
+        resolved_instructions = instructions if instructions is not None else self.instructions
+        if resolved_instructions:
+            payload["instructions"] = resolved_instructions
 
         endpoints = [self.tts_url]
         if self.fallback_url and self.fallback_url != self.tts_url:
@@ -150,18 +174,22 @@ class LemonFoxTTSClient:
         for endpoint in endpoints:
             try:
                 logger.debug(
-                    "TTS request -> %s | model=%s voice=%s language=%s response_format=%s speed=%s",
+                    "TTS request -> %s | model=%s voice=%s response_format=%s speed=%s",
                     endpoint,
                     payload["model"],
                     payload["voice"],
-                    payload["language"],
                     payload["response_format"],
                     payload["speed"],
                 )
+                request_payload = dict(payload)
+                # OpenAI's speech API examples do not send `language` for built-in voices.
+                # Keep the field only for non-OpenAI backends where callers may rely on it.
+                if not self._supports_openai_native_payload(endpoint) and (language or self.language):
+                    request_payload["language"] = language or self.language
                 resp = client.post(
                     endpoint,
                     headers=self._headers(),
-                    json=payload,
+                    json=request_payload,
                 )
                 if resp.status_code >= 400:
                     raise RuntimeError(self._http_error_message(resp))

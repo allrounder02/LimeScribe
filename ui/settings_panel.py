@@ -15,24 +15,27 @@ from PyQt6.QtCore import Qt, QTimer, pyqtSignal
 from hotkeys import DEFAULT_HOTKEY_LISTEN, DEFAULT_HOTKEY_RECORD
 from ui.icon_library import ui_icon
 from config import (
-    LEMONFOX_LANGUAGE,
-    LEMONFOX_RESPONSE_FORMAT,
+    OPENAI_STT_LANGUAGE,
+    OPENAI_STT_RESPONSE_FORMAT,
+    OPENAI_STT_RESPONSE_FORMATS,
+    OPENAI_TTS_MODELS,
+    OPENAI_TTS_RESPONSE_FORMATS,
+    OPENAI_TTS_SPEED,
     VAD_AGGRESSIVENESS,
     VAD_MIN_SPEECH_SECONDS,
-    LEMONFOX_TTS_MODEL,
-    LEMONFOX_TTS_VOICE,
-    LEMONFOX_TTS_LANGUAGE,
-    LEMONFOX_TTS_RESPONSE_FORMAT,
-    LEMONFOX_TTS_SPEED,
+    OPENAI_TTS_LANGUAGE,
+    OPENAI_TTS_MODEL,
+    OPENAI_TTS_VOICE,
+    OPENAI_TTS_RESPONSE_FORMAT,
 )
 
 logger = logging.getLogger(__name__)
 
-TTS_MODEL_PRESETS = ["tts-1", "tts-1-hd"]
-TTS_LANGUAGE_PRESETS = ["en-us", "en-gb", "ja", "zh", "es", "fr", "hi", "it", "pt-br"]
-TTS_RESPONSE_FORMAT_PRESETS = ["wav", "mp3", "ogg", "flac"]
-STT_RESPONSE_FORMAT_PRESETS = ["json", "text", "srt", "vtt"]
-STT_LANGUAGE_PRESETS = ["english", "german", "spanish", "italian", "french"]
+TTS_MODEL_PRESETS = list(OPENAI_TTS_MODELS)
+TTS_LANGUAGE_PRESETS = ["en-us", "en-gb", "de", "es", "fr", "it", "ja", "pt-br", "zh"]
+TTS_RESPONSE_FORMAT_PRESETS = [fmt for fmt in OPENAI_TTS_RESPONSE_FORMATS if fmt != "pcm"]
+STT_RESPONSE_FORMAT_PRESETS = [fmt for fmt in OPENAI_STT_RESPONSE_FORMATS if fmt != "verbose_json"]
+STT_LANGUAGE_PRESETS = ["english", "german", "spanish", "italian", "french", "portuguese", "japanese"]
 VOICE_PRESETS_PATH = Path(__file__).resolve().parent.parent / "data" / "voice_presets.json"
 VAD_NOISE_MIN = 0
 VAD_NOISE_MAX = 100
@@ -304,7 +307,7 @@ class SettingsPanel(QWidget):
         self.input_stt_language = QComboBox()
         self.input_stt_language.setEditable(True)
         self.input_stt_language.addItems(STT_LANGUAGE_PRESETS)
-        self.input_stt_language.setCurrentText(LEMONFOX_LANGUAGE)
+        self.input_stt_language.setCurrentText(OPENAI_STT_LANGUAGE)
         self.input_stt_language.currentTextChanged.connect(lambda _v: self._schedule_stt_auto_apply())
         stt_lang_row.addWidget(self.input_stt_language)
         layout.addLayout(stt_lang_row)
@@ -314,7 +317,7 @@ class SettingsPanel(QWidget):
         self.input_stt_response_format = QComboBox()
         self.input_stt_response_format.setEditable(True)
         self.input_stt_response_format.addItems(STT_RESPONSE_FORMAT_PRESETS)
-        self.input_stt_response_format.setCurrentText(LEMONFOX_RESPONSE_FORMAT)
+        self.input_stt_response_format.setCurrentText(OPENAI_STT_RESPONSE_FORMAT)
         self.input_stt_response_format.currentTextChanged.connect(lambda _v: self._schedule_stt_auto_apply())
         stt_fmt_row.addWidget(self.input_stt_response_format)
         layout.addLayout(stt_fmt_row)
@@ -492,7 +495,7 @@ class SettingsPanel(QWidget):
         self.input_tts_model = QComboBox()
         self.input_tts_model.setEditable(True)
         self.input_tts_model.addItems(TTS_MODEL_PRESETS)
-        self.input_tts_model.setCurrentText(LEMONFOX_TTS_MODEL)
+        self.input_tts_model.setCurrentText(OPENAI_TTS_MODEL)
         self.input_tts_model.currentTextChanged.connect(lambda _v: self._schedule_tts_auto_apply())
         tts_model_row.addWidget(self.input_tts_model)
         layout.addLayout(tts_model_row)
@@ -502,7 +505,7 @@ class SettingsPanel(QWidget):
         self.input_tts_language = QComboBox()
         self.input_tts_language.setEditable(True)
         self.input_tts_language.addItems(TTS_LANGUAGE_PRESETS)
-        self.input_tts_language.setCurrentText(LEMONFOX_TTS_LANGUAGE)
+        self.input_tts_language.setCurrentText(OPENAI_TTS_LANGUAGE)
         self.input_tts_language.currentTextChanged.connect(lambda _v: self._schedule_tts_auto_apply())
         tts_lang_row.addWidget(self.input_tts_language)
         layout.addLayout(tts_lang_row)
@@ -512,7 +515,7 @@ class SettingsPanel(QWidget):
         self.input_tts_response_format = QComboBox()
         self.input_tts_response_format.setEditable(True)
         self.input_tts_response_format.addItems(TTS_RESPONSE_FORMAT_PRESETS)
-        self.input_tts_response_format.setCurrentText(LEMONFOX_TTS_RESPONSE_FORMAT)
+        self.input_tts_response_format.setCurrentText(OPENAI_TTS_RESPONSE_FORMAT)
         self.input_tts_response_format.currentTextChanged.connect(lambda _v: self._schedule_tts_auto_apply())
         tts_fmt_row.addWidget(self.input_tts_response_format)
         layout.addLayout(tts_fmt_row)
@@ -523,7 +526,7 @@ class SettingsPanel(QWidget):
         self.input_tts_speed.setDecimals(2)
         self.input_tts_speed.setRange(TTS_SPEED_MIN, TTS_SPEED_MAX)
         self.input_tts_speed.setSingleStep(0.05)
-        self.input_tts_speed.setValue(self._coerce_tts_speed(LEMONFOX_TTS_SPEED))
+        self.input_tts_speed.setValue(self._coerce_tts_speed(OPENAI_TTS_SPEED))
         self.input_tts_speed.valueChanged.connect(lambda _v: self._schedule_tts_auto_apply())
         tts_speed_row.addWidget(self.input_tts_speed)
         layout.addLayout(tts_speed_row)
@@ -680,8 +683,8 @@ class SettingsPanel(QWidget):
                 QMessageBox.warning(self, "STT Settings Error", str(e))
 
     def _restore_default_stt_settings(self):
-        self._set_combo_value(self.input_stt_language, LEMONFOX_LANGUAGE)
-        self._set_combo_value(self.input_stt_response_format, LEMONFOX_RESPONSE_FORMAT)
+        self._set_combo_value(self.input_stt_language, OPENAI_STT_LANGUAGE)
+        self._set_combo_value(self.input_stt_response_format, OPENAI_STT_RESPONSE_FORMAT)
         self.chk_auto_copy_transcription.setChecked(True)
         self.chk_clear_output_after_copy.setChecked(False)
         self.chk_stop_listening_after_copy.setChecked(False)
@@ -709,11 +712,11 @@ class SettingsPanel(QWidget):
 
     def _restore_default_tts_settings(self):
         self._updating_tts_controls = True
-        self._set_combo_value(self.input_tts_model, LEMONFOX_TTS_MODEL)
-        self._set_voice_combo_value(LEMONFOX_TTS_VOICE)
-        self._set_combo_value(self.input_tts_language, LEMONFOX_TTS_LANGUAGE)
-        self._set_combo_value(self.input_tts_response_format, LEMONFOX_TTS_RESPONSE_FORMAT)
-        self.input_tts_speed.setValue(self._coerce_tts_speed(LEMONFOX_TTS_SPEED))
+        self._set_combo_value(self.input_tts_model, OPENAI_TTS_MODEL)
+        self._set_voice_combo_value(OPENAI_TTS_VOICE)
+        self._set_combo_value(self.input_tts_language, OPENAI_TTS_LANGUAGE)
+        self._set_combo_value(self.input_tts_response_format, OPENAI_TTS_RESPONSE_FORMAT)
+        self.input_tts_speed.setValue(self._coerce_tts_speed(OPENAI_TTS_SPEED))
         self._updating_tts_controls = False
         self._emit_tts_settings()
 
@@ -769,10 +772,10 @@ class SettingsPanel(QWidget):
         return None
 
     def _apply_profile_to_ui(self, profile: dict):
-        self._set_combo_value(self.input_stt_language, profile.get("stt_language", LEMONFOX_LANGUAGE))
+        self._set_combo_value(self.input_stt_language, profile.get("stt_language", OPENAI_STT_LANGUAGE))
         self._set_combo_value(
             self.input_stt_response_format,
-            profile.get("stt_response_format", LEMONFOX_RESPONSE_FORMAT),
+            profile.get("stt_response_format", OPENAI_STT_RESPONSE_FORMAT),
         )
         self._updating_vad_controls = True
         self.slider_vad_noise.setValue(
@@ -795,14 +798,14 @@ class SettingsPanel(QWidget):
         self._updating_vad_controls = False
         self._update_vad_summary()
         self._updating_tts_controls = True
-        self._set_combo_value(self.input_tts_model, profile.get("tts_model", LEMONFOX_TTS_MODEL))
-        self._set_voice_combo_value(profile.get("tts_voice", LEMONFOX_TTS_VOICE))
-        self._set_combo_value(self.input_tts_language, profile.get("tts_language", LEMONFOX_TTS_LANGUAGE))
+        self._set_combo_value(self.input_tts_model, profile.get("tts_model", OPENAI_TTS_MODEL))
+        self._set_voice_combo_value(profile.get("tts_voice", OPENAI_TTS_VOICE))
+        self._set_combo_value(self.input_tts_language, profile.get("tts_language", OPENAI_TTS_LANGUAGE))
         self._set_combo_value(
             self.input_tts_response_format,
-            profile.get("tts_response_format", LEMONFOX_TTS_RESPONSE_FORMAT),
+            profile.get("tts_response_format", OPENAI_TTS_RESPONSE_FORMAT),
         )
-        self.input_tts_speed.setValue(self._coerce_tts_speed(profile.get("tts_speed", LEMONFOX_TTS_SPEED)))
+        self.input_tts_speed.setValue(self._coerce_tts_speed(profile.get("tts_speed", OPENAI_TTS_SPEED)))
         self._updating_tts_controls = False
         self._emit_stt_settings(show_status=False)
         self._emit_tts_settings(show_status=False, silent=True)
@@ -910,14 +913,14 @@ class SettingsPanel(QWidget):
         self._set_combo_value(self.combo_voice_filter_language, profile.get("voice_filter_language", "any"))
         self._set_combo_value(self.combo_voice_filter_gender, profile.get("voice_filter_gender", "any"))
         self._refresh_voice_actor_options()
-        self._set_combo_value(self.input_tts_model, profile.get("tts_model", LEMONFOX_TTS_MODEL))
-        self._set_voice_combo_value(profile.get("tts_voice", LEMONFOX_TTS_VOICE))
-        self._set_combo_value(self.input_tts_language, profile.get("tts_language", LEMONFOX_TTS_LANGUAGE))
+        self._set_combo_value(self.input_tts_model, profile.get("tts_model", OPENAI_TTS_MODEL))
+        self._set_voice_combo_value(profile.get("tts_voice", OPENAI_TTS_VOICE))
+        self._set_combo_value(self.input_tts_language, profile.get("tts_language", OPENAI_TTS_LANGUAGE))
         self._set_combo_value(
             self.input_tts_response_format,
-            profile.get("tts_response_format", LEMONFOX_TTS_RESPONSE_FORMAT),
+            profile.get("tts_response_format", OPENAI_TTS_RESPONSE_FORMAT),
         )
-        self.input_tts_speed.setValue(self._coerce_tts_speed(profile.get("tts_speed", LEMONFOX_TTS_SPEED)))
+        self.input_tts_speed.setValue(self._coerce_tts_speed(profile.get("tts_speed", OPENAI_TTS_SPEED)))
         self._updating_tts_controls = False
         if emit_tts:
             self._emit_tts_settings(show_status=False, silent=True)
@@ -998,9 +1001,9 @@ class SettingsPanel(QWidget):
             try:
                 speed = float(raw)
             except (TypeError, ValueError):
-                speed = float(LEMONFOX_TTS_SPEED)
+                speed = float(OPENAI_TTS_SPEED)
         if speed <= 0:
-            speed = float(LEMONFOX_TTS_SPEED)
+            speed = float(OPENAI_TTS_SPEED)
         return max(TTS_SPEED_MIN, min(TTS_SPEED_MAX, speed))
 
     def _current_voice_value(self) -> str:
@@ -1079,8 +1082,8 @@ class SettingsPanel(QWidget):
     @staticmethod
     def _load_voice_presets():
         fallback = [
-            {"id": "heart", "actor": "Heart", "language": "en-us", "gender": "female"},
-            {"id": "alloy", "actor": "Alloy", "language": "en-us", "gender": "male"},
+            {"id": "coral", "actor": "Coral", "language": "en-us", "gender": "female"},
+            {"id": "alloy", "actor": "Alloy", "language": "en-us", "gender": "neutral"},
             {"id": "shimmer", "actor": "Shimmer", "language": "en-us", "gender": "female"},
             {"id": "echo", "actor": "Echo", "language": "en-us", "gender": "male"},
         ]

@@ -1,4 +1,4 @@
-"""Wrapper for LemonFox OpenAI-compatible chat-completions API."""
+"""Wrapper for OpenAI-compatible chat-completions APIs."""
 
 from __future__ import annotations
 
@@ -35,16 +35,16 @@ class LemonFoxChatClient:
             self.model = model or config.chat_model
         else:
             from config import (
-                LEMONFOX_API_KEY,
-                LEMONFOX_CHAT_FALLBACK_URL,
-                LEMONFOX_CHAT_MODEL,
-                LEMONFOX_CHAT_URL,
+                OPENAI_API_KEY,
+                OPENAI_CHAT_FALLBACK_URL,
+                OPENAI_CHAT_MODEL,
+                OPENAI_CHAT_URL,
             )
 
-            self.api_key = api_key or LEMONFOX_API_KEY
-            self.chat_url = chat_url or LEMONFOX_CHAT_URL
-            self.fallback_url = fallback_url if fallback_url is not None else LEMONFOX_CHAT_FALLBACK_URL
-            self.model = model or LEMONFOX_CHAT_MODEL
+            self.api_key = api_key or OPENAI_API_KEY
+            self.chat_url = chat_url or OPENAI_CHAT_URL
+            self.fallback_url = fallback_url if fallback_url is not None else OPENAI_CHAT_FALLBACK_URL
+            self.model = model or OPENAI_CHAT_MODEL
 
     def _headers(self):
         return {"Authorization": f"Bearer {self.api_key}"}

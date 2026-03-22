@@ -47,7 +47,7 @@ class DialoguePanel(QWidget):
         model_row.addWidget(QLabel("Model"))
         self.combo_model = QComboBox()
         self.combo_model.setEditable(True)
-        self.combo_model.addItems(["llama-8b-chat", "llama-70b-chat"])
+        self.combo_model.addItems(["gpt-4o-mini", "gpt-4o"])
         self.combo_model.currentTextChanged.connect(self._on_model_changed)
         model_row.addWidget(self.combo_model)
         model_row.addSpacing(14)
