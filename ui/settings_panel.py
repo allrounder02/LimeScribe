@@ -13,6 +13,7 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtCore import Qt, QTimer, pyqtSignal
 
 from hotkeys import DEFAULT_HOTKEY_LISTEN, DEFAULT_HOTKEY_RECORD
+from language_tools import normalize_stt_language, normalize_tts_language
 from ui.icon_library import ui_icon
 from config import (
     OPENAI_STT_LANGUAGE,
@@ -32,10 +33,10 @@ from config import (
 logger = logging.getLogger(__name__)
 
 TTS_MODEL_PRESETS = list(OPENAI_TTS_MODELS)
-TTS_LANGUAGE_PRESETS = ["en-us", "en-gb", "de", "es", "fr", "it", "ja", "pt-br", "zh"]
+TTS_LANGUAGE_PRESETS = ["auto", "en-us", "de", "en-gb", "es", "fr", "it", "ja", "pt-br", "zh"]
 TTS_RESPONSE_FORMAT_PRESETS = [fmt for fmt in OPENAI_TTS_RESPONSE_FORMATS if fmt != "pcm"]
 STT_RESPONSE_FORMAT_PRESETS = [fmt for fmt in OPENAI_STT_RESPONSE_FORMATS if fmt != "verbose_json"]
-STT_LANGUAGE_PRESETS = ["english", "german", "spanish", "italian", "french", "portuguese", "japanese"]
+STT_LANGUAGE_PRESETS = ["auto", "english", "german", "spanish", "italian", "french", "portuguese", "japanese"]
 VOICE_PRESETS_PATH = Path(__file__).resolve().parent.parent / "data" / "voice_presets.json"
 VAD_NOISE_MIN = 0
 VAD_NOISE_MAX = 100
@@ -105,7 +106,7 @@ class SettingsPanel(QWidget):
         vad_aggressiveness=None,
         vad_min_speech_seconds=None,
     ):
-        self._set_combo_value(self.input_stt_language, language)
+        self._set_combo_value(self.input_stt_language, normalize_stt_language(language))
         self._set_combo_value(self.input_stt_response_format, response_format)
         self.chk_auto_copy_transcription.setChecked(auto_copy)
         self.chk_clear_output_after_copy.setChecked(bool(clear_output_after_copy))
@@ -131,7 +132,7 @@ class SettingsPanel(QWidget):
         self._updating_tts_controls = True
         self._set_combo_value(self.input_tts_model, model)
         self._set_voice_combo_value(voice)
-        self._set_combo_value(self.input_tts_language, language)
+        self._set_combo_value(self.input_tts_language, normalize_tts_language(language))
         self._set_combo_value(self.input_tts_response_format, response_format)
         self.input_tts_speed.setValue(self._coerce_tts_speed(speed))
         self._updating_tts_controls = False
@@ -207,7 +208,7 @@ class SettingsPanel(QWidget):
     # ── Collect settings from UI ───────────────────────────────────
 
     def collect_stt_settings(self) -> dict:
-        language = self.input_stt_language.currentText().strip().lower()
+        language = normalize_stt_language(self.input_stt_language.currentText())
         response_format = self.input_stt_response_format.currentText().strip().lower()
         if not language or not response_format:
             raise ValueError("STT language and response format are required.")
@@ -229,7 +230,7 @@ class SettingsPanel(QWidget):
     def collect_tts_settings(self) -> dict:
         model = self.input_tts_model.currentText().strip()
         voice = self._current_voice_value()
-        language = self.input_tts_language.currentText().strip()
+        language = normalize_tts_language(self.input_tts_language.currentText())
         response_format = self.input_tts_response_format.currentText().strip().lower()
 
         if not model or not voice or not language or not response_format:
@@ -307,7 +308,10 @@ class SettingsPanel(QWidget):
         self.input_stt_language = QComboBox()
         self.input_stt_language.setEditable(True)
         self.input_stt_language.addItems(STT_LANGUAGE_PRESETS)
-        self.input_stt_language.setCurrentText(OPENAI_STT_LANGUAGE)
+        self.input_stt_language.setCurrentText(normalize_stt_language(OPENAI_STT_LANGUAGE))
+        self.input_stt_language.setToolTip(
+            "Use 'auto' to let the API detect English vs German from the incoming speech."
+        )
         self.input_stt_language.currentTextChanged.connect(lambda _v: self._schedule_stt_auto_apply())
         stt_lang_row.addWidget(self.input_stt_language)
         layout.addLayout(stt_lang_row)
@@ -505,7 +509,10 @@ class SettingsPanel(QWidget):
         self.input_tts_language = QComboBox()
         self.input_tts_language.setEditable(True)
         self.input_tts_language.addItems(TTS_LANGUAGE_PRESETS)
-        self.input_tts_language.setCurrentText(OPENAI_TTS_LANGUAGE)
+        self.input_tts_language.setCurrentText(normalize_tts_language(OPENAI_TTS_LANGUAGE))
+        self.input_tts_language.setToolTip(
+            "Use 'auto' to detect English vs German from the pasted text before synthesis."
+        )
         self.input_tts_language.currentTextChanged.connect(lambda _v: self._schedule_tts_auto_apply())
         tts_lang_row.addWidget(self.input_tts_language)
         layout.addLayout(tts_lang_row)
@@ -683,7 +690,7 @@ class SettingsPanel(QWidget):
                 QMessageBox.warning(self, "STT Settings Error", str(e))
 
     def _restore_default_stt_settings(self):
-        self._set_combo_value(self.input_stt_language, OPENAI_STT_LANGUAGE)
+        self._set_combo_value(self.input_stt_language, normalize_stt_language(OPENAI_STT_LANGUAGE))
         self._set_combo_value(self.input_stt_response_format, OPENAI_STT_RESPONSE_FORMAT)
         self.chk_auto_copy_transcription.setChecked(True)
         self.chk_clear_output_after_copy.setChecked(False)
@@ -714,7 +721,7 @@ class SettingsPanel(QWidget):
         self._updating_tts_controls = True
         self._set_combo_value(self.input_tts_model, OPENAI_TTS_MODEL)
         self._set_voice_combo_value(OPENAI_TTS_VOICE)
-        self._set_combo_value(self.input_tts_language, OPENAI_TTS_LANGUAGE)
+        self._set_combo_value(self.input_tts_language, normalize_tts_language(OPENAI_TTS_LANGUAGE))
         self._set_combo_value(self.input_tts_response_format, OPENAI_TTS_RESPONSE_FORMAT)
         self.input_tts_speed.setValue(self._coerce_tts_speed(OPENAI_TTS_SPEED))
         self._updating_tts_controls = False
@@ -729,14 +736,14 @@ class SettingsPanel(QWidget):
 
     def _collect_profile_payload(self) -> dict:
         return {
-            "stt_language": self.input_stt_language.currentText().strip(),
+            "stt_language": normalize_stt_language(self.input_stt_language.currentText()),
             "stt_response_format": self.input_stt_response_format.currentText().strip().lower(),
             "vad_noise_level": int(self.slider_vad_noise.value()),
             "vad_aggressiveness": int(self.input_vad_aggressiveness.value()),
             "vad_min_speech_seconds": float(self.input_vad_min_speech_seconds.value()),
             "tts_model": self.input_tts_model.currentText().strip(),
             "tts_voice": self._current_voice_value(),
-            "tts_language": self.input_tts_language.currentText().strip(),
+            "tts_language": normalize_tts_language(self.input_tts_language.currentText()),
             "tts_response_format": self.input_tts_response_format.currentText().strip().lower(),
             "tts_speed": self._format_tts_speed(self.input_tts_speed.value()),
         }
@@ -772,7 +779,10 @@ class SettingsPanel(QWidget):
         return None
 
     def _apply_profile_to_ui(self, profile: dict):
-        self._set_combo_value(self.input_stt_language, profile.get("stt_language", OPENAI_STT_LANGUAGE))
+        self._set_combo_value(
+            self.input_stt_language,
+            normalize_stt_language(profile.get("stt_language", OPENAI_STT_LANGUAGE)),
+        )
         self._set_combo_value(
             self.input_stt_response_format,
             profile.get("stt_response_format", OPENAI_STT_RESPONSE_FORMAT),
@@ -800,7 +810,10 @@ class SettingsPanel(QWidget):
         self._updating_tts_controls = True
         self._set_combo_value(self.input_tts_model, profile.get("tts_model", OPENAI_TTS_MODEL))
         self._set_voice_combo_value(profile.get("tts_voice", OPENAI_TTS_VOICE))
-        self._set_combo_value(self.input_tts_language, profile.get("tts_language", OPENAI_TTS_LANGUAGE))
+        self._set_combo_value(
+            self.input_tts_language,
+            normalize_tts_language(profile.get("tts_language", OPENAI_TTS_LANGUAGE)),
+        )
         self._set_combo_value(
             self.input_tts_response_format,
             profile.get("tts_response_format", OPENAI_TTS_RESPONSE_FORMAT),
@@ -915,7 +928,10 @@ class SettingsPanel(QWidget):
         self._refresh_voice_actor_options()
         self._set_combo_value(self.input_tts_model, profile.get("tts_model", OPENAI_TTS_MODEL))
         self._set_voice_combo_value(profile.get("tts_voice", OPENAI_TTS_VOICE))
-        self._set_combo_value(self.input_tts_language, profile.get("tts_language", OPENAI_TTS_LANGUAGE))
+        self._set_combo_value(
+            self.input_tts_language,
+            normalize_tts_language(profile.get("tts_language", OPENAI_TTS_LANGUAGE)),
+        )
         self._set_combo_value(
             self.input_tts_response_format,
             profile.get("tts_response_format", OPENAI_TTS_RESPONSE_FORMAT),

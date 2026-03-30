@@ -45,6 +45,51 @@ class SettingsPersistenceTests(unittest.TestCase):
             self.assertFalse(loaded["tts_optimize_long_text"])
             self.assertEqual(loaded["tts_optimize_threshold_chars"], 360)
 
+    def test_auto_language_values_are_normalized_on_reload(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            settings_path = Path(tmp_dir) / "settings.json"
+            with patch.object(config, "_SETTINGS_PATH", settings_path):
+                config.save_app_settings(
+                    {
+                        "stt_language": "AUTO",
+                        "tts_language": "AUTO",
+                        "profiles": [
+                            {
+                                "name": "Bilingual",
+                                "stt_language": "de",
+                                "stt_response_format": "json",
+                                "vad_noise_level": 10,
+                                "vad_aggressiveness": 2,
+                                "vad_min_speech_seconds": 0.5,
+                                "tts_model": "gpt-4o-mini-tts",
+                                "tts_voice": "coral",
+                                "tts_language": "Deutsch",
+                                "tts_response_format": "wav",
+                                "tts_speed": "1.0",
+                            }
+                        ],
+                        "tts_profiles": [
+                            {
+                                "name": "Auto Voice",
+                                "voice_filter_language": "any",
+                                "voice_filter_gender": "any",
+                                "tts_model": "gpt-4o-mini-tts",
+                                "tts_voice": "coral",
+                                "tts_language": "AUTO",
+                                "tts_response_format": "wav",
+                                "tts_speed": "1.0",
+                            }
+                        ],
+                    }
+                )
+                loaded = config.load_app_settings()
+
+            self.assertEqual(loaded["stt_language"], "auto")
+            self.assertEqual(loaded["tts_language"], "auto")
+            self.assertEqual(loaded["profiles"][0]["stt_language"], "german")
+            self.assertEqual(loaded["profiles"][0]["tts_language"], "de")
+            self.assertEqual(loaded["tts_profiles"][0]["tts_language"], "auto")
+
     def test_invalid_loaded_values_fall_back_to_defaults(self):
         with tempfile.TemporaryDirectory() as tmp_dir:
             settings_path = Path(tmp_dir) / "settings.json"
@@ -130,6 +175,35 @@ class SettingsPersistenceTests(unittest.TestCase):
                 loaded = config.load_app_settings()
 
             self.assertEqual(loaded["chat_model"], config.OPENAI_CHAT_MODEL)
+            self.assertEqual(loaded["tts_voice"], config.OPENAI_TTS_VOICE)
+            self.assertEqual(loaded["tts_profiles"][0]["tts_voice"], config.OPENAI_TTS_VOICE)
+
+    def test_unsupported_openai_voice_falls_back_to_default(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            settings_path = Path(tmp_dir) / "settings.json"
+            settings_path.write_text(
+                json.dumps(
+                    {
+                        "tts_voice": "marin",
+                        "tts_profiles": [
+                            {
+                                "name": "Unsupported Voice",
+                                "voice_filter_language": "any",
+                                "voice_filter_gender": "any",
+                                "tts_model": "gpt-4o-mini-tts",
+                                "tts_voice": "marin",
+                                "tts_language": "en-us",
+                                "tts_response_format": "wav",
+                                "tts_speed": "1.0",
+                            }
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            with patch.object(config, "_SETTINGS_PATH", settings_path):
+                loaded = config.load_app_settings()
+
             self.assertEqual(loaded["tts_voice"], config.OPENAI_TTS_VOICE)
             self.assertEqual(loaded["tts_profiles"][0]["tts_voice"], config.OPENAI_TTS_VOICE)
 

@@ -10,7 +10,6 @@
     { "id": "coral", "actor": "Coral", "language": "en-us", "gender": "female" },
     { "id": "echo", "actor": "Echo", "language": "en-us", "gender": "male" },
     { "id": "fable", "actor": "Fable", "language": "en-us", "gender": "neutral" },
-    { "id": "marin", "actor": "Marin", "language": "en-us", "gender": "female" },
     { "id": "nova", "actor": "Nova", "language": "en-us", "gender": "female" },
     { "id": "onyx", "actor": "Onyx", "language": "en-us", "gender": "male" },
     { "id": "sage", "actor": "Sage", "language": "en-us", "gender": "neutral" },

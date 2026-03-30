@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING
 import httpx
 
 from core.http_client import get_shared_client
+from language_tools import AUTO_LANGUAGE, map_openai_stt_language, normalize_stt_language
 
 if TYPE_CHECKING:
     from core.app_config import AppConfig
@@ -15,18 +16,6 @@ logger = logging.getLogger(__name__)
 
 class LemonFoxClient:
     """Wrapper for OpenAI-compatible speech-to-text APIs."""
-
-    _OPENAI_LANGUAGE_MAP = {
-        "english": "en",
-        "german": "de",
-        "spanish": "es",
-        "italian": "it",
-        "french": "fr",
-        "portuguese": "pt",
-        "japanese": "ja",
-        "chinese": "zh",
-        "hindi": "hi",
-    }
 
     def __init__(
         self,
@@ -39,7 +28,7 @@ class LemonFoxClient:
         if config:
             self.api_key = api_key or config.api_key
             self.model = model or config.stt_model
-            self.language = language or config.stt_language
+            self.language = normalize_stt_language(language or config.stt_language)
             self.response_format = response_format or config.stt_response_format
             self.api_url = config.api_url
             self.fallback_api_url = config.api_fallback_url
@@ -54,7 +43,7 @@ class LemonFoxClient:
             )
             self.api_key = api_key or OPENAI_API_KEY
             self.model = model or OPENAI_STT_MODEL
-            self.language = language or OPENAI_STT_LANGUAGE
+            self.language = normalize_stt_language(language or OPENAI_STT_LANGUAGE)
             self.response_format = response_format or OPENAI_STT_RESPONSE_FORMAT
             self.api_url = OPENAI_STT_URL
             self.fallback_api_url = OPENAI_STT_FALLBACK_URL
@@ -72,12 +61,12 @@ class LemonFoxClient:
 
     @classmethod
     def _normalize_language(cls, endpoint: str, language: str) -> str:
-        candidate = str(language or "").strip()
-        if not candidate:
+        candidate = normalize_stt_language(language, default="")
+        if not candidate or candidate == AUTO_LANGUAGE:
             return ""
         if "api.openai.com" not in str(endpoint or ""):
             return candidate
-        return cls._OPENAI_LANGUAGE_MAP.get(candidate.lower(), candidate)
+        return map_openai_stt_language(candidate)
 
     @staticmethod
     def _looks_like_json(text: str) -> bool:

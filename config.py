@@ -3,6 +3,8 @@ import json
 from pathlib import Path
 from dotenv import load_dotenv
 
+from language_tools import normalize_stt_language, normalize_tts_language
+
 load_dotenv()
 
 
@@ -42,7 +44,6 @@ OPENAI_TTS_VOICES = (
     "coral",
     "echo",
     "fable",
-    "marin",
     "nova",
     "onyx",
     "sage",
@@ -88,8 +89,8 @@ def _normalize_tts_voice(value, default: str = "coral") -> str:
         "puck": "fable",
         "adam": "alloy",
         "santa": "verse",
-        "alice": "marin",
-        "emma": "marin",
+        "alice": "coral",
+        "emma": "coral",
         "isabella": "cedar",
         "lily": "shimmer",
         "daniel": "onyx",
@@ -106,7 +107,7 @@ DEFAULT_HOTKEY_DIALOGUE = "Ctrl+Alt+D"
 OPENAI_API_KEY = _getenv("OPENAI_API_KEY", "LEMONFOX_API_KEY", default="")
 if _openai_mode_enabled():
     OPENAI_STT_MODEL = _getenv("OPENAI_STT_MODEL", default="gpt-4o-mini-transcribe")
-    OPENAI_STT_LANGUAGE = _getenv("OPENAI_STT_LANGUAGE", default="english")
+    OPENAI_STT_LANGUAGE = normalize_stt_language(_getenv("OPENAI_STT_LANGUAGE", default="english"))
     OPENAI_STT_RESPONSE_FORMAT = _getenv("OPENAI_STT_RESPONSE_FORMAT", default="json")
     OPENAI_STT_URL = _getenv("OPENAI_STT_URL", default="https://api.openai.com/v1/audio/transcriptions")
     OPENAI_STT_FALLBACK_URL = _getenv("OPENAI_STT_FALLBACK_URL", default="")
@@ -114,12 +115,12 @@ if _openai_mode_enabled():
     OPENAI_TTS_FALLBACK_URL = _getenv("OPENAI_TTS_FALLBACK_URL", default="")
     OPENAI_TTS_MODEL = _normalize_tts_model(_getenv("OPENAI_TTS_MODEL", default="gpt-4o-mini-tts"))
     OPENAI_TTS_VOICE = _normalize_tts_voice(_getenv("OPENAI_TTS_VOICE", default="coral"))
-    OPENAI_TTS_LANGUAGE = _getenv("OPENAI_TTS_LANGUAGE", default="en-us")
+    OPENAI_TTS_LANGUAGE = normalize_tts_language(_getenv("OPENAI_TTS_LANGUAGE", default="en-us"))
     OPENAI_TTS_RESPONSE_FORMAT = _getenv("OPENAI_TTS_RESPONSE_FORMAT", default="wav")
     OPENAI_TTS_SPEED = _getenv_float("OPENAI_TTS_SPEED", default=1.0)
 else:
     OPENAI_STT_MODEL = _getenv("LEMONFOX_STT_MODEL", default="gpt-4o-mini-transcribe")
-    OPENAI_STT_LANGUAGE = _getenv("LEMONFOX_LANGUAGE", default="english")
+    OPENAI_STT_LANGUAGE = normalize_stt_language(_getenv("LEMONFOX_LANGUAGE", default="english"))
     OPENAI_STT_RESPONSE_FORMAT = _getenv("LEMONFOX_RESPONSE_FORMAT", default="json")
     OPENAI_STT_URL = _getenv("LEMONFOX_API_URL", default="https://api.openai.com/v1/audio/transcriptions")
     OPENAI_STT_FALLBACK_URL = _getenv("LEMONFOX_API_FALLBACK_URL", default="")
@@ -127,7 +128,7 @@ else:
     OPENAI_TTS_FALLBACK_URL = _getenv("LEMONFOX_TTS_FALLBACK_URL", default="")
     OPENAI_TTS_MODEL = _normalize_tts_model(_getenv("LEMONFOX_TTS_MODEL", default="gpt-4o-mini-tts"))
     OPENAI_TTS_VOICE = _normalize_tts_voice(_getenv("LEMONFOX_TTS_VOICE", default="coral"))
-    OPENAI_TTS_LANGUAGE = _getenv("LEMONFOX_TTS_LANGUAGE", default="en-us")
+    OPENAI_TTS_LANGUAGE = normalize_tts_language(_getenv("LEMONFOX_TTS_LANGUAGE", default="en-us"))
     OPENAI_TTS_RESPONSE_FORMAT = _getenv("LEMONFOX_TTS_RESPONSE_FORMAT", default="wav")
     OPENAI_TTS_SPEED = _getenv_float("LEMONFOX_TTS_SPEED", default=1.0)
 OPENAI_TTS_INSTRUCTIONS = _getenv("OPENAI_TTS_INSTRUCTIONS", default="")
@@ -311,7 +312,10 @@ def load_app_settings() -> dict:
                             profiles.append(
                                 {
                                     "name": item["name"].strip(),
-                                    "stt_language": str(item.get("stt_language", settings["stt_language"])).strip(),
+                                    "stt_language": normalize_stt_language(
+                                        item.get("stt_language", settings["stt_language"]),
+                                        default=settings["stt_language"],
+                                    ),
                                     "stt_response_format": str(
                                         item.get("stt_response_format", settings["stt_response_format"])
                                     ).strip(),
@@ -335,7 +339,10 @@ def load_app_settings() -> dict:
                                         item.get("tts_voice", settings["tts_voice"]),
                                         default=settings["tts_voice"],
                                     ),
-                                    "tts_language": str(item.get("tts_language", settings["tts_language"])).strip(),
+                                    "tts_language": normalize_tts_language(
+                                        item.get("tts_language", settings["tts_language"]),
+                                        default=settings["tts_language"],
+                                    ),
                                     "tts_response_format": str(
                                         item.get("tts_response_format", settings["tts_response_format"])
                                     ).strip(),
@@ -364,7 +371,10 @@ def load_app_settings() -> dict:
                                         item.get("tts_voice", settings["tts_voice"]),
                                         default=settings["tts_voice"],
                                     ),
-                                    "tts_language": str(item.get("tts_language", settings["tts_language"])).strip(),
+                                    "tts_language": normalize_tts_language(
+                                        item.get("tts_language", settings["tts_language"]),
+                                        default=settings["tts_language"],
+                                    ),
                                     "tts_response_format": str(
                                         item.get("tts_response_format", settings["tts_response_format"])
                                     ).strip(),
@@ -389,13 +399,25 @@ def load_app_settings() -> dict:
                         settings[key] = _normalize_tts_model(cleaned, default=DEFAULT_SETTINGS[key])
                     elif key == "tts_voice":
                         settings[key] = _normalize_tts_voice(cleaned, default=DEFAULT_SETTINGS[key])
+                    elif key == "stt_language":
+                        settings[key] = normalize_stt_language(cleaned, default=DEFAULT_SETTINGS[key])
+                    elif key == "tts_language":
+                        settings[key] = normalize_tts_language(cleaned, default=DEFAULT_SETTINGS[key])
                     else:
                         settings[key] = cleaned
     except (json.JSONDecodeError, OSError):
         pass
+    settings["stt_language"] = normalize_stt_language(
+        settings.get("stt_language"),
+        default=DEFAULT_SETTINGS["stt_language"],
+    )
     settings["chat_model"] = _normalize_chat_model(settings.get("chat_model"), default=DEFAULT_SETTINGS["chat_model"])
     settings["tts_model"] = _normalize_tts_model(settings.get("tts_model"), default=DEFAULT_SETTINGS["tts_model"])
     settings["tts_voice"] = _normalize_tts_voice(settings.get("tts_voice"), default=DEFAULT_SETTINGS["tts_voice"])
+    settings["tts_language"] = normalize_tts_language(
+        settings.get("tts_language"),
+        default=DEFAULT_SETTINGS["tts_language"],
+    )
     if settings["active_profile"] not in [p["name"] for p in settings["profiles"]]:
         settings["active_profile"] = settings["profiles"][0]["name"]
     if settings["active_tts_profile"] not in [p["name"] for p in settings["tts_profiles"]]:
@@ -427,6 +449,10 @@ def save_app_settings(settings: dict):
                 payload[key] = _normalize_tts_model(cleaned, default=DEFAULT_SETTINGS[key])
             elif key == "tts_voice":
                 payload[key] = _normalize_tts_voice(cleaned, default=DEFAULT_SETTINGS[key])
+            elif key == "stt_language":
+                payload[key] = normalize_stt_language(cleaned, default=DEFAULT_SETTINGS[key])
+            elif key == "tts_language":
+                payload[key] = normalize_tts_language(cleaned, default=DEFAULT_SETTINGS[key])
             else:
                 payload[key] = cleaned
     _SETTINGS_PATH.write_text(json.dumps(payload, indent=2), encoding="utf-8")

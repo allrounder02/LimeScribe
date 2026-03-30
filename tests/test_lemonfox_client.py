@@ -79,3 +79,27 @@ class TestLemonFoxClientRequestShaping:
 
         kwargs = mock_http.post.call_args.kwargs
         assert kwargs["data"]["language"] == "english"
+
+    def test_auto_language_omits_language_field_for_openai(self):
+        client = LemonFoxClient(
+            api_key="test-key",
+            model="gpt-4o-mini-transcribe",
+            language="auto",
+            response_format="json",
+        )
+        client.api_url = "https://api.openai.com/v1/audio/transcriptions"
+        response = MagicMock()
+        response.raise_for_status = MagicMock()
+        response.json.return_value = {"text": "guten morgen"}
+        response.text = '{"text":"guten morgen"}'
+
+        with patch("core.lemonfox_client.get_shared_client") as mock_get:
+            mock_http = MagicMock()
+            mock_http.post.return_value = response
+            mock_get.return_value = mock_http
+
+            text = client.transcribe_bytes(b"fake-audio")
+
+        assert text == "guten morgen"
+        kwargs = mock_http.post.call_args.kwargs
+        assert "language" not in kwargs["data"]

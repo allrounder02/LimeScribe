@@ -9,6 +9,7 @@ from typing import Callable, Optional
 from core.app_config import AppConfig
 from core.lemonfox_tts_client import LemonFoxTTSClient
 from core.tts_text import normalize_tts_text, split_tts_chunks
+from language_tools import normalize_tts_language
 
 logger = logging.getLogger(__name__)
 
@@ -87,7 +88,13 @@ class TTSService:
         """Update TTS settings on the live client."""
         for key in ("model", "voice", "language", "response_format", "speed"):
             if key in kwargs and kwargs[key] is not None:
-                setattr(self.client, key, kwargs[key])
+                value = kwargs[key]
+                if key == "language":
+                    value = normalize_tts_language(value, default=self.client.language)
+                setattr(self.client, key, value)
+
+    def resolve_language(self, text: str, language: str | None = None) -> str:
+        return self.client.resolve_language(text, language=language)
 
     @staticmethod
     def _merge_wav_chunks(parts: list[bytes], silence_ms: int = 160) -> bytes:

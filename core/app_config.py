@@ -5,6 +5,8 @@ from dataclasses import dataclass
 
 from dotenv import load_dotenv
 
+from language_tools import normalize_stt_language, normalize_tts_language
+
 
 def _getenv(*names: str, default: str = "") -> str:
     for name in names:
@@ -64,13 +66,13 @@ class AppConfig:
             api_url = _getenv("OPENAI_STT_URL", default="https://api.openai.com/v1/audio/transcriptions")
             api_fallback_url = _getenv("OPENAI_STT_FALLBACK_URL", default="")
             stt_model = _getenv("OPENAI_STT_MODEL", default="gpt-4o-mini-transcribe")
-            stt_language = _getenv("OPENAI_STT_LANGUAGE", default="english")
+            stt_language = normalize_stt_language(_getenv("OPENAI_STT_LANGUAGE", default="english"))
             stt_response_format = _getenv("OPENAI_STT_RESPONSE_FORMAT", default="json")
             tts_url = _getenv("OPENAI_TTS_URL", default="https://api.openai.com/v1/audio/speech")
             tts_fallback_url = _getenv("OPENAI_TTS_FALLBACK_URL", default="")
             tts_model = _getenv("OPENAI_TTS_MODEL", default="gpt-4o-mini-tts")
             tts_voice = _getenv("OPENAI_TTS_VOICE", default="coral")
-            tts_language = _getenv("OPENAI_TTS_LANGUAGE", default="en-us")
+            tts_language = normalize_tts_language(_getenv("OPENAI_TTS_LANGUAGE", default="en-us"))
             tts_response_format = _getenv("OPENAI_TTS_RESPONSE_FORMAT", default="wav")
             tts_speed = float(_getenv("OPENAI_TTS_SPEED", default="1.0"))
             chat_url = _getenv("OPENAI_CHAT_URL", default="https://api.openai.com/v1/chat/completions")
@@ -84,13 +86,13 @@ class AppConfig:
             api_url = _getenv("LEMONFOX_API_URL", default="https://api.openai.com/v1/audio/transcriptions")
             api_fallback_url = _getenv("LEMONFOX_API_FALLBACK_URL", default="")
             stt_model = _getenv("LEMONFOX_STT_MODEL", default="gpt-4o-mini-transcribe")
-            stt_language = _getenv("LEMONFOX_LANGUAGE", default="english")
+            stt_language = normalize_stt_language(_getenv("LEMONFOX_LANGUAGE", default="english"))
             stt_response_format = _getenv("LEMONFOX_RESPONSE_FORMAT", default="json")
             tts_url = _getenv("LEMONFOX_TTS_URL", default="https://api.openai.com/v1/audio/speech")
             tts_fallback_url = _getenv("LEMONFOX_TTS_FALLBACK_URL", default="")
             tts_model = _getenv("LEMONFOX_TTS_MODEL", default="gpt-4o-mini-tts")
             tts_voice = _getenv("LEMONFOX_TTS_VOICE", default="coral")
-            tts_language = _getenv("LEMONFOX_TTS_LANGUAGE", default="en-us")
+            tts_language = normalize_tts_language(_getenv("LEMONFOX_TTS_LANGUAGE", default="en-us"))
             tts_response_format = _getenv("LEMONFOX_TTS_RESPONSE_FORMAT", default="wav")
             tts_speed = float(_getenv("LEMONFOX_TTS_SPEED", default="1.0"))
             chat_url = _getenv("LEMONFOX_CHAT_URL", default="https://api.openai.com/v1/chat/completions")

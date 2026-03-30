@@ -16,6 +16,7 @@ from core.audio_playback import is_playback_active, play_wav_bytes, stop_playbac
 from core.dialogue_service import DialogueService
 from core.lemonfox_client import LemonFoxClient
 from core.lemonfox_tts_client import LemonFoxTTSClient
+from language_tools import normalize_tts_language
 from core.vad_listener import VADListener
 
 if TYPE_CHECKING:
@@ -141,7 +142,10 @@ class VoiceDialogueOrchestrator:
         """Update TTS settings for voice dialogue playback only."""
         for key in ("model", "voice", "language", "response_format", "speed"):
             if key in kwargs and kwargs[key] is not None:
-                setattr(self._tts_client, key, kwargs[key])
+                value = kwargs[key]
+                if key == "language":
+                    value = normalize_tts_language(value, default=self._tts_client.language)
+                setattr(self._tts_client, key, value)
 
     def start(self):
         """Begin the voice dialogue loop (start listening)."""

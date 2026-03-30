@@ -80,6 +80,59 @@ class LemonFoxTTSClientErrorTests(unittest.TestCase):
         self.assertNotIn("language", kwargs["json"])
         self.assertEqual(kwargs["json"]["instructions"], "Speak warmly.")
 
+    def test_openai_auto_language_adds_german_instruction_hint(self):
+        client = LemonFoxTTSClient(
+            api_key="test-key",
+            tts_url="https://api.openai.com/v1/audio/speech",
+            model="gpt-4o-mini-tts",
+            voice="coral",
+            language="auto",
+            response_format="wav",
+        )
+        response = httpx.Response(
+            200,
+            headers={"content-type": "audio/wav"},
+            content=b"RIFF....WAVE",
+        )
+
+        with patch("core.lemonfox_tts_client.get_shared_client") as mock_get:
+            mock_http = MagicMock()
+            mock_http.post.return_value = response
+            mock_get.return_value = mock_http
+
+            audio = client.synthesize("Guten Morgen. Das ist ein deutscher Test.")
+
+        self.assertEqual(audio, b"RIFF....WAVE")
+        kwargs = mock_http.post.call_args.kwargs
+        self.assertNotIn("language", kwargs["json"])
+        self.assertEqual(kwargs["json"]["instructions"], "Speak naturally in German.")
+
+    def test_non_openai_auto_language_uses_detected_language_field(self):
+        client = LemonFoxTTSClient(
+            api_key="test-key",
+            tts_url="https://example.com/v1/audio/speech",
+            model="custom-tts",
+            voice="coral",
+            language="auto",
+            response_format="wav",
+        )
+        response = httpx.Response(
+            200,
+            headers={"content-type": "audio/wav"},
+            content=b"RIFF....WAVE",
+        )
+
+        with patch("core.lemonfox_tts_client.get_shared_client") as mock_get:
+            mock_http = MagicMock()
+            mock_http.post.return_value = response
+            mock_get.return_value = mock_http
+
+            audio = client.synthesize("Bitte lies diesen Satz auf Deutsch vor.")
+
+        self.assertEqual(audio, b"RIFF....WAVE")
+        kwargs = mock_http.post.call_args.kwargs
+        self.assertEqual(kwargs["json"]["language"], "de")
+
 
 if __name__ == "__main__":
     unittest.main()

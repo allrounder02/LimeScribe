@@ -6,6 +6,12 @@ import httpx
 
 from core.audio_format import detect_audio_format
 from core.http_client import get_shared_client
+from language_tools import (
+    AUTO_LANGUAGE,
+    build_tts_language_instruction,
+    normalize_tts_language,
+    resolve_tts_language,
+)
 
 if TYPE_CHECKING:
     from core.app_config import AppConfig
@@ -35,7 +41,7 @@ class LemonFoxTTSClient:
             self.fallback_url = fallback_url if fallback_url is not None else config.tts_fallback_url
             self.model = model or config.tts_model
             self.voice = voice or config.tts_voice
-            self.language = language or config.tts_language
+            self.language = normalize_tts_language(language or config.tts_language)
             self.response_format = response_format or config.tts_response_format
             self.speed = config.tts_speed if speed is None else speed
             self.instructions = instructions if instructions is not None else config.tts_instructions
@@ -56,7 +62,7 @@ class LemonFoxTTSClient:
             self.fallback_url = fallback_url if fallback_url is not None else OPENAI_TTS_FALLBACK_URL
             self.model = model or OPENAI_TTS_MODEL
             self.voice = voice or OPENAI_TTS_VOICE
-            self.language = language or OPENAI_TTS_LANGUAGE
+            self.language = normalize_tts_language(language or OPENAI_TTS_LANGUAGE)
             self.response_format = response_format or OPENAI_TTS_RESPONSE_FORMAT
             self.speed = OPENAI_TTS_SPEED if speed is None else speed
             self.instructions = instructions if instructions is not None else OPENAI_TTS_INSTRUCTIONS
@@ -141,6 +147,13 @@ class LemonFoxTTSClient:
     def _supports_openai_native_payload(endpoint: str) -> bool:
         return "api.openai.com" in str(endpoint or "")
 
+    @staticmethod
+    def _supports_openai_tts_instructions(model: str) -> bool:
+        return str(model or "").strip().lower().startswith("gpt-4o-mini-tts")
+
+    def resolve_language(self, text: str, language: str | None = None) -> str:
+        return resolve_tts_language(language or self.language, text=text)
+
     def synthesize(
         self,
         text: str,
@@ -154,16 +167,18 @@ class LemonFoxTTSClient:
         if not text or not text.strip():
             raise ValueError("Text-to-speech input cannot be empty.")
 
+        resolved_model = model or self.model
+        requested_language = normalize_tts_language(language or self.language)
+        resolved_language = self.resolve_language(text, language=requested_language)
+        resolved_instructions = instructions if instructions is not None else self.instructions
+
         payload = {
-            "model": model or self.model,
+            "model": resolved_model,
             "voice": voice or self.voice,
             "input": text,
             "response_format": response_format or self.response_format,
             "speed": self.speed if speed is None else speed,
         }
-        resolved_instructions = instructions if instructions is not None else self.instructions
-        if resolved_instructions:
-            payload["instructions"] = resolved_instructions
 
         endpoints = [self.tts_url]
         if self.fallback_url and self.fallback_url != self.tts_url:
@@ -174,18 +189,28 @@ class LemonFoxTTSClient:
         for endpoint in endpoints:
             try:
                 logger.debug(
-                    "TTS request -> %s | model=%s voice=%s response_format=%s speed=%s",
+                    "TTS request -> %s | model=%s voice=%s language=%s response_format=%s speed=%s",
                     endpoint,
                     payload["model"],
                     payload["voice"],
+                    resolved_language,
                     payload["response_format"],
                     payload["speed"],
                 )
                 request_payload = dict(payload)
+                request_instructions = resolved_instructions
+                if (
+                    self._supports_openai_native_payload(endpoint)
+                    and self._supports_openai_tts_instructions(request_payload["model"])
+                    and (requested_language == AUTO_LANGUAGE or resolved_language == "de")
+                ):
+                    request_instructions = build_tts_language_instruction(resolved_language, request_instructions)
+                if request_instructions:
+                    request_payload["instructions"] = request_instructions
                 # OpenAI's speech API examples do not send `language` for built-in voices.
                 # Keep the field only for non-OpenAI backends where callers may rely on it.
-                if not self._supports_openai_native_payload(endpoint) and (language or self.language):
-                    request_payload["language"] = language or self.language
+                if not self._supports_openai_native_payload(endpoint) and resolved_language:
+                    request_payload["language"] = resolved_language
                 resp = client.post(
                     endpoint,
                     headers=self._headers(),

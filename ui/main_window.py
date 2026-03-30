@@ -20,6 +20,7 @@ from core.tts_service import TTSService
 from core.text_output import copy_to_clipboard
 from core.voice_dialogue import VoiceDialogueOrchestrator, VoiceDialogueState
 from core.wav_playback import WavPlaybackController
+from language_tools import is_auto_language, normalize_tts_language, tts_language_label
 from ui.dialogue_panel import DialoguePanel
 from ui.icon_library import ui_icon
 from ui.tts_panel import TTSPanel
@@ -993,12 +994,19 @@ class MainWindow(QMainWindow):
         if not self._sync_tts_settings_from_panel():
             return
         response_format = str(self.tts_service.client.response_format or "").strip().lower() or "unknown"
+        configured_language = normalize_tts_language(self.tts_service.client.language)
+        resolved_language = self.tts_service.resolve_language(text, language=configured_language)
         optimize_long_text = self.tts_panel.should_optimize_long_text()
         threshold_chars = self.tts_panel.get_optimize_threshold_chars()
         self.tts_panel.set_generate_enabled(False)
         self._stop_tts_playback(update_status=False)
         if response_format == "wav":
-            self.statusBar().showMessage("Generating speech...")
+            if is_auto_language(configured_language):
+                self.statusBar().showMessage(
+                    f"Generating {tts_language_label(resolved_language)} speech (auto-detected)..."
+                )
+            else:
+                self.statusBar().showMessage("Generating speech...")
         else:
             self.statusBar().showMessage(
                 f"Generating {response_format.upper()} audio (playback controls require WAV)."

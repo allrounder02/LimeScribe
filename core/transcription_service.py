@@ -11,6 +11,7 @@ from uuid import uuid4
 
 from core.app_config import AppConfig
 from core.lemonfox_client import LemonFoxClient
+from language_tools import normalize_stt_language
 
 logger = logging.getLogger(__name__)
 
@@ -206,7 +207,7 @@ class TranscriptionService:
     ):
         """Update STT/VAD settings and apply them live when possible."""
         if language:
-            self.client.language = language
+            self.client.language = normalize_stt_language(language, default=self.client.language)
         if response_format:
             self.client.response_format = response_format
         restart_vad = False
